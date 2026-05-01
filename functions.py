@@ -449,7 +449,7 @@ def donwload_data(df, file_name):
 
 @st.cache_data()
 def load_data(file, sheet):
-    df = pd.read_excel(file, sheet_name=sheet, header=None)
+    df = pd.read_excel(file, sheet_name=sheet, header=None, dtype=object)
     return df
 
 

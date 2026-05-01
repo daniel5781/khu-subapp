@@ -11,8 +11,12 @@ from networkx.exception import PowerIterationFailedConvergence
 def main():
     st.sidebar.header("다운로드")
     st.title("산업연관데이터 DashBoard")
-    mode = st.radio('모드 선택', ['Korea(2010~2020)', 'Korea(1990~2005)', 'Manual'])
+    mode = st.radio('모드 선택', ['Korea(2010~2020)', 'Japan(2000~2015)', 'Korea(1990~2005)', 'Manual'])
     if mode == 'Korea(2010~2020)':
+        first_idx = (6,2)
+        subplus_edit =False
+        number_of_label = 2
+    elif mode == 'Japan(2000~2015)':
         first_idx = (6,2)
         subplus_edit =False
         number_of_label = 2
