@@ -712,9 +712,21 @@ def build_classification_workbook(out_path: Path) -> None:
 # 이고, 파일이 없는 URL 은 200 OK 의 HTML soft-404 를 돌려주므로
 # Content-Type 에 'spreadsheet' 가 포함된 경우만 진짜 파일로 본다.
 BEA_STATIC_BASE = "https://apps.bea.gov/industry/xls/io-annual/"
+# (stem, base_year) for files that follow the {stem}_{base_year}-YYYY.xlsx pattern
+# at SUMMARY level (year-range workbooks).
 BEA_IMPORT_STEMS = [
     "ImportMatrices_Before_Redefinitions_SUM",
     "ImportMatrices_After_Redefinitions_SUM",
+]
+# DETAIL-level files have a fixed filename (no year-range suffix). Each is a
+# multi-sheet workbook keyed by benchmark year (1997 / 2002 / 2007 / 2012 / 2017).
+BEA_DETAIL_FILES = [
+    "IOUse_Before_Redefinitions_PRO_DET.xlsx",
+    "IOUse_After_Redefinitions_PRO_DET.xlsx",
+    "IOMake_Before_Redefinitions_DET.xlsx",
+    "IOMake_After_Redefinitions_DET.xlsx",
+    "ImportMatrices_Before_Redefinitions_DET_2017.xlsx",
+    "ImportMatrices_After_Redefinitions_DET_2017.xlsx",
 ]
 
 
@@ -757,33 +769,49 @@ def find_latest_bea_static(stem: str, base_year: int = 1997) -> str | None:
     return None
 
 
+def _download_one(url: str, out: Path, *, force: bool = False) -> Path | None:
+    """단일 BEA 정적 파일 다운로드 (이미 있으면 건너뜀)."""
+    if out.exists() and out.stat().st_size > 100_000 and not force:
+        log.info(f"[정적] {out.name} 이미 존재 — 건너뜀 ({out.stat().st_size:,} bytes)")
+        return out
+    log.info(f"[정적] {url} → {out.name}")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            content = resp.read()
+            ctype = resp.headers.get("Content-Type", "").lower()
+        if "spreadsheet" not in ctype:
+            log.warning(f"  [정적] content-type={ctype} — soft-404 가능. 건너뜀.")
+            return None
+        out.write_bytes(content)
+        log.info(f"  [정적] 저장 완료: {out.stat().st_size:,} bytes")
+        return out
+    except Exception as e:
+        log.error(f"  [정적] 다운로드 실패: {e}")
+        return None
+
+
 def download_bea_static_files(force: bool = False) -> list[Path]:
-    """BEA 정적 import matrix 워크북을 받는다 (이미 존재하면 건너뜀)."""
+    """BEA 정적 워크북 (SUMMARY Import 다년도 + DETAIL Use/Make/Import) 다운로드.
+    이미 존재하면 건너뜀."""
     saved: list[Path] = []
+    # SUMMARY-level Import: latest year-range file ({stem}_1997-YYYY.xlsx)
     for stem in BEA_IMPORT_STEMS:
         url = find_latest_bea_static(stem)
         if url is None:
             log.warning(f"[정적] {stem} 의 최신 파일을 찾지 못했습니다.")
             continue
-        local_name = _bea_local_name(url)
-        out = OUTPUT_DIR / local_name
-        if out.exists() and out.stat().st_size > 100_000 and not force:
-            log.info(f"[정적] {local_name} 이미 존재 — 건너뜀 "
-                     f"({out.stat().st_size:,} bytes)")
-            saved.append(out)
-            continue
-        log.info(f"[정적] {url} → {local_name}")
-        try:
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "Mozilla/5.0"}
-            )
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-                content = resp.read()
-            out.write_bytes(content)
-            log.info(f"  [정적] 저장 완료: {out.stat().st_size:,} bytes")
-            saved.append(out)
-        except Exception as e:
-            log.error(f"  [정적] 다운로드 실패: {e}")
+        out = OUTPUT_DIR / _bea_local_name(url)
+        result = _download_one(url, out, force=force)
+        if result is not None:
+            saved.append(result)
+    # DETAIL-level files: BEA filename preserved as-is (no _bea_local_name).
+    for fn in BEA_DETAIL_FILES:
+        url = BEA_STATIC_BASE + fn
+        out = OUTPUT_DIR / fn
+        result = _download_one(url, out, force=force)
+        if result is not None:
+            saved.append(result)
     return saved
 
 

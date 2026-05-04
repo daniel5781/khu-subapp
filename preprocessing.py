@@ -49,6 +49,7 @@ MODES: List[str] = [
     "Korea(1990~2005)",
     "Manual",
     "US(BEA Summary)",
+    "US(BEA Detail)",
 ]
 
 _PARAMS = {
@@ -57,7 +58,28 @@ _PARAMS = {
     "Korea(1990~2005)": ModeParams(first_idx=(5, 2), subplus_edit=True,  number_of_label=2),
     "Manual":           ModeParams(first_idx=0,      subplus_edit=False, number_of_label=2),
     "US(BEA Summary)":  ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
+    "US(BEA Detail)":   ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
 }
+
+
+# Where (codes, names, data) live in each BEA xlsx flavor (0-indexed row positions).
+# Canonical layout (after _normalize_bea_xlsx) is title=0, codes=1, names=2, data=3+,
+# which is what _square_industry_codes and _build_bok_layout expect.
+@dataclass(frozen=True)
+class HeaderLayout:
+    title_row: int
+    codes_row: int
+    names_row: int
+    data_start: int
+
+# SUMMARY-level files written by `bea_io_download.py`'s `write_matrix_to_sheet`
+# (codes above names, no extra header rows) — already canonical, no normalization.
+_LAYOUT_SUMMARY_USE = HeaderLayout(0, 1, 2, 3)
+# BEA's Import Matrix multi-year & single-year files — 5 header rows then codes/names.
+_LAYOUT_SUMMARY_IMPORT = HeaderLayout(0, 5, 6, 7)
+# BEA's official DETAIL files (Use/Make/Import) — names ABOVE codes (rows 4 vs 5).
+_LAYOUT_DETAIL = HeaderLayout(0, 5, 4, 6)
+
 
 # US-only config. `import_files` is a priority list — the first file in repo whose
 # sheet contains the requested year wins. Single-year fallbacks may use {year}.
@@ -65,17 +87,37 @@ _US_CONFIG: Dict[str, Dict[str, Any]] = {
     "US(BEA Summary)": {
         "level": "Summary",
         "use_filename": "bea_use_table_all_years_summary.xlsx",
+        "use_layout": _LAYOUT_SUMMARY_USE,
         "import_files": [
             "bea_import_matrices_before_redefinitions_SUM_1997-2023.xlsx",
             "bea_import_matrices_after_redefinitions_SUM_1997-2023.xlsx",
             "bea_import_matrix_summary_{year}.xlsx",   # single-year fallback (e.g. 2024)
         ],
+        "import_layout": _LAYOUT_SUMMARY_IMPORT,
+    },
+    "US(BEA Detail)": {
+        "level": "Detail",
+        "use_filename": "IOUse_Before_Redefinitions_PRO_DET.xlsx",
+        "use_layout": _LAYOUT_DETAIL,
+        "import_files": [
+            # BEA's "ImportMatrices_Before_Redefinitions_DET_2017.xlsx" actually
+            # contains 2007/2012/2017 sheets — the most-recent file is the only
+            # one needed at DETAIL level.
+            "ImportMatrices_Before_Redefinitions_DET_2017.xlsx",
+            "ImportMatrices_After_Redefinitions_DET_2017.xlsx",
+        ],
+        "import_layout": _LAYOUT_DETAIL,
     },
 }
 
 
 def get_mode_params(mode: str) -> ModeParams:
     return _PARAMS[mode]
+
+
+def get_us_config(mode: str) -> Dict[str, Any]:
+    """Read-only view of `_US_CONFIG[mode]` for app.py UI hints (filename, level)."""
+    return dict(_US_CONFIG.get(mode, {}))
 
 
 def _find_string_values(df: pd.DataFrame, first_idx) -> List[Tuple[Any, Any, str]]:
@@ -185,11 +227,28 @@ def _to_float_or_zero(x) -> float:
         return 0.0
 
 
-def _strip_bea_import_header(import_raw: pd.DataFrame) -> pd.DataFrame:
-    """BEA Import Matrix: 7 header rows (title + year + source + 2 blanks +
-    col codes + col names). BEA Use Table: 3 (title + col codes + col names).
-    Drop rows 1-4 so both end up at first_idx=(3, 2)."""
-    return import_raw.drop(index=[1, 2, 3, 4]).reset_index(drop=True)
+def _normalize_bea_xlsx(df: pd.DataFrame, layout: HeaderLayout) -> pd.DataFrame:
+    """Reformat any BEA xlsx into the canonical layout used by the rest of this
+    module: row 0 = title, row 1 = column codes, row 2 = column names, row 3+
+    = data with row codes in col 0 and row descriptions in col 1.
+
+    This handles the difference between BEA's SUMMARY-level files (codes above
+    names) and DETAIL files (names above codes), and the extra header rows in
+    Import Matrix workbooks."""
+    title = df.iloc[[layout.title_row]].reset_index(drop=True)
+    codes = df.iloc[[layout.codes_row]].reset_index(drop=True)
+    names = df.iloc[[layout.names_row]].reset_index(drop=True)
+    data = df.iloc[layout.data_start:].reset_index(drop=True)
+    return pd.concat([title, codes, names, data], ignore_index=True)
+
+
+# Row-code candidates — first match wins.
+# SUMMARY/SECTOR uses 4-char codes; DETAIL uses 6-char (T018 → T008, etc.).
+_TOTAL_OUTPUT_ROW_CANDIDATES = ("T018", "T008")
+_TOTAL_VA_ROW_CANDIDATES = ("VAPRO", "VABAS", "T006")
+# Components for explicit VA fallback (when no single total row exists).
+_VA_PLUS_CODES = ("V001", "V003", "V00100", "V00300", "T00OTOP", "T00TOP", "V00200")
+_VA_MINUS_CODES = ("T00OSUB", "T00SUB")
 
 
 def _square_industry_codes(use_df: pd.DataFrame, imp_df: pd.DataFrame) -> List[str]:
@@ -249,45 +308,45 @@ def _build_bok_layout(
             fd_sum[i] += _to_float_or_zero(bea_df.iat[r_idx, 2 + j])
 
     # VA per col (Use file only — Import has no VA rows).
-    # VAPRO = Value Added at Producer Prices (single total). Fallback:
-    # VABAS, otherwise V001+V003+(T00OTOP-T00OSUB)+(T00TOP-T00SUB) explicit sum.
-    # NOTE: T018 is industry total output, NOT a VA component — must NOT be summed in.
+    # Single-total row preferred (VAPRO/VABAS at SUMMARY, T006 at DETAIL); otherwise
+    # explicit sum V001+V003+(T00OTOP-T00OSUB)+(T00TOP-T00SUB) — DETAIL uses 6-char
+    # variants V00100/V00300/V00200.
+    # NOTE: T018/T008 are industry total output, NOT VA components — never summed.
     va_per_col = np.zeros(n, dtype=float)
     if has_va:
-        if 'VAPRO' in row_pos:
-            r = row_pos['VAPRO']
-            for ci in industry_codes:
-                va_per_col[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
-        elif 'VABAS' in row_pos:
-            r = row_pos['VABAS']
+        va_total_code = next((c for c in _TOTAL_VA_ROW_CANDIDATES if c in row_pos), None)
+        if va_total_code is not None:
+            r = row_pos[va_total_code]
             for ci in industry_codes:
                 va_per_col[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
         else:
             for ci in industry_codes:
                 cidx = col_pos[ci]
                 acc = 0.0
-                for code in ('V001', 'V003', 'T00OTOP', 'T00TOP'):
+                for code in _VA_PLUS_CODES:
                     if code in row_pos:
                         acc += _to_float_or_zero(bea_df.iat[row_pos[code], cidx])
-                for code in ('T00OSUB', 'T00SUB'):
+                for code in _VA_MINUS_CODES:
                     if code in row_pos:
                         acc -= _to_float_or_zero(bea_df.iat[row_pos[code], cidx])
                 va_per_col[code_to_pos[ci]] = acc
 
-    # Total output per col (= 총투입계 = industry output): T018 in Use; for Import
-    # the caller must pass total_out_override (= Use's T018) so BoK Aᵐ is
-    # normalized by the same industry output as A.
+    # Total output per col (= 총투입계 = industry output): T018 (SUMMARY/SECTOR) or
+    # T008 (DETAIL). For Import the caller must pass total_out_override (= Use's
+    # T018/T008) so BoK Aᵐ is normalized by the same industry output as A.
     total_out = np.zeros(n, dtype=float)
     if total_out_override is not None:
         for ci in industry_codes:
             total_out[code_to_pos[ci]] = float(total_out_override.get(ci, 0.0))
-    elif 'T018' in row_pos:
-        r = row_pos['T018']
-        for ci in industry_codes:
-            total_out[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
     else:
-        for j_x in range(n):
-            total_out[j_x] = X[:, j_x].sum() + va_per_col[j_x]
+        out_code = next((c for c in _TOTAL_OUTPUT_ROW_CANDIDATES if c in row_pos), None)
+        if out_code is not None:
+            r = row_pos[out_code]
+            for ci in industry_codes:
+                total_out[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
+        else:
+            for j_x in range(n):
+                total_out[j_x] = X[:, j_x].sum() + va_per_col[j_x]
 
     # Compose canonical layout.
     n_rows = 6 + n + 3
@@ -418,11 +477,14 @@ def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> Load
             f"다음 중 하나를 저장소 루트에 두세요: {candidates}"
         )
 
+    # Both files get normalized to canonical first_idx=(3, 2) layout — DETAIL
+    # files have names ABOVE codes which the rest of the pipeline can't read.
     use_raw = pd.read_excel(uploaded_file, sheet_name=expected_sheet, header=None, dtype=object)
     imp_raw = pd.read_excel(str(import_path), sheet_name=import_sheet, header=None, dtype=object)
-    imp_df = _strip_bea_import_header(imp_raw)
+    use_df = _normalize_bea_xlsx(use_raw, cfg["use_layout"])
+    imp_df = _normalize_bea_xlsx(imp_raw, cfg["import_layout"])
 
-    industry_codes = _square_industry_codes(use_raw, imp_df)
+    industry_codes = _square_industry_codes(use_df, imp_df)
     if len(industry_codes) < 2:
         raise ValueError(
             f"BEA Use[{year}] and Import[{year}] only share {len(industry_codes)} "
@@ -430,18 +492,20 @@ def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> Load
             f"`{expected_use_filename}` and that {import_path.name} contains data for {year}."
         )
 
-    # Industry output (T018 in Use 표) — Aᵐ 정규화에 동일 분모로 재사용.
-    use_row_codes = [str(c) for c in use_raw.iloc[3:, 0].tolist()]
-    use_col_codes = [str(c) for c in use_raw.iloc[1, 2:].tolist()]
+    # Industry total output row in Use (T018 SUMMARY / T008 DETAIL) — reused as
+    # the denominator for the Import workbook so BoK Aᵐ shares the same x̂.
+    use_row_codes = [str(c) for c in use_df.iloc[3:, 0].tolist()]
+    use_col_codes = [str(c) for c in use_df.iloc[1, 2:].tolist()]
     industry_output: Dict[str, float] = {}
-    if 'T018' in use_row_codes:
-        t018_row = 3 + use_row_codes.index('T018')
+    out_code = next((c for c in _TOTAL_OUTPUT_ROW_CANDIDATES if c in use_row_codes), None)
+    if out_code is not None:
+        out_row = 3 + use_row_codes.index(out_code)
         for j, cc in enumerate(use_col_codes):
             if cc in industry_codes:
-                industry_output[cc] = _to_float_or_zero(use_raw.iat[t018_row, 2 + j])
+                industry_output[cc] = _to_float_or_zero(use_df.iat[out_row, 2 + j])
 
     use_canonical = _build_bok_layout(
-        use_raw, industry_codes,
+        use_df, industry_codes,
         title=f'BEA Use Table — {level} {year}', year=year, has_va=True,
         total_out_override=industry_output,
     )

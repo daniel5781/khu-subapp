@@ -22,12 +22,13 @@ def main():
     us_year = None
     if mode.startswith("US"):
         avail_years = preprocessing.available_us_years(mode)
+        cfg = preprocessing.get_us_config(mode)
+        use_filename = cfg["use_filename"]
         if not avail_years:
             st.error(
                 f"`{mode}` 모드 데이터를 찾지 못했습니다. 저장소 루트에 "
-                f"`bea_use_table_all_years_summary.xlsx` 와 "
-                f"`bea_import_matrices_before_redefinitions_SUM_1997-2023.xlsx` "
-                f"(또는 단일년도 Import 파일) 가 있어야 합니다."
+                f"`{use_filename}` 와 Import 매트릭스 파일이 있어야 합니다. "
+                f"`python bea_io_download.py` 를 한 번 실행하면 모두 받습니다."
             )
         else:
             us_year = st.selectbox(
@@ -35,11 +36,19 @@ def main():
                 options=avail_years,
                 index=len(avail_years) - 1,
             )
-            st.caption(
-                "업로드 파일: `bea_use_table_all_years_summary.xlsx` (BEA Use 다년도 워크북). "
-                "Import 매트릭스는 저장소의 `bea_import_matrices_*_SUM_1997-2023.xlsx` 또는 "
-                "`bea_import_matrix_summary_<연도>.xlsx` 가 코드에 의해 자동 결합됩니다."
-            )
+            level = cfg.get("level", "Summary")
+            if level == "Detail":
+                st.caption(
+                    f"📂 업로드 파일: `{use_filename}` (BEA DETAIL Use, 벤치마크년 2007/2012). "
+                    f"Import 는 저장소의 `ImportMatrices_*_DET_2017.xlsx` 가 자동 결합됩니다 "
+                    f"(약 405 산업 × 405 산업, 매핑 후 정사각 산업 블록 추출)."
+                )
+            else:
+                st.caption(
+                    f"📂 업로드 파일: `{use_filename}` (BEA SUMMARY Use, 1997~2024). "
+                    f"Import 는 저장소의 `bea_import_matrices_*_SUM_1997-2023.xlsx` 또는 "
+                    f"단일년도 fallback 파일이 자동 결합됩니다."
+                )
 
     if 'number_of_divide' not in st.session_state:
         st.session_state['number_of_divide'] = 0
