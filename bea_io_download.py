@@ -587,90 +587,237 @@ def _codes_to_df(d: dict[str, str]) -> pd.DataFrame:
     return df
 
 
+def parse_bea_naics_hierarchy(xlsx_path: Path) -> pd.DataFrame:
+    """BEA DETAIL xlsx 의 'NAICS Codes' 시트를 파싱해 4계층 hierarchy 를 반환.
+
+    BEA 가 발표하는 시트 구조 (들여쓰기 식):
+        col 1 = Sector code (sector 행에서만 채워짐)
+        col 2 = Summary code (summary 행에서만 채워짐) | Sector name (sector 행)
+        col 3 = U.Summary code (u.summary 행에서만)    | Summary name (summary 행)
+        col 4 = Detail code (detail 행에서만)          | U.Summary name (u.summary 행)
+        col 5 = Detail name (detail 행)
+
+    각 detail 행에 대해 부모 (sector / summary / u.summary) 를 currently-active
+    상태에서 채워 한 행으로 정리한다.
+
+    Returns DataFrame with columns:
+        sector_code, sector_name, summary_code, summary_name,
+        u_summary_code, u_summary_name, detail_code, detail_name
+    """
+    import openpyxl as _xl
+    wb = _xl.load_workbook(str(xlsx_path), read_only=True, data_only=True)
+    if "NAICS Codes" not in wb.sheetnames:
+        raise ValueError(f"'NAICS Codes' 시트가 {xlsx_path.name} 에 없습니다.")
+    ws = wb["NAICS Codes"]
+
+    def _v(cell):
+        """공백만 들어있는 셀도 None 으로 취급."""
+        if cell.value is None:
+            return None
+        s = str(cell.value).strip()
+        return s if s else None
+
+    cur_sector = (None, None)
+    cur_summary = (None, None)
+    cur_u_summary = (None, None)
+    out: list[dict] = []
+    HEADER_TEXTS = {"Sector", "Summary", "U.Summary", "Detail",
+                    "BEA Industry Code", "Industry Title"}
+
+    for r in range(6, ws.max_row + 1):           # R1-R5 는 헤더, R6+ 데이터
+        c1 = _v(ws.cell(r, 1))
+        c2 = _v(ws.cell(r, 2))
+        c3 = _v(ws.cell(r, 3))
+        c4 = _v(ws.cell(r, 4))
+        c5 = _v(ws.cell(r, 5))
+        # 헤더 텍스트가 데이터로 끼어든 경우 무시
+        if c1 in HEADER_TEXTS: c1 = None
+        if c2 in HEADER_TEXTS: c2 = None
+        if c3 in HEADER_TEXTS: c3 = None
+        if c4 in HEADER_TEXTS: c4 = None
+
+        if c1 is not None:
+            cur_sector = (c1, c2 or "")
+            cur_summary = (None, None)
+            cur_u_summary = (None, None)
+        elif c2 is not None:
+            cur_summary = (c2, c3 or "")
+            cur_u_summary = (None, None)
+        elif c3 is not None:
+            cur_u_summary = (c3, c4 or "")
+        elif c4 is not None:
+            out.append({
+                "sector_code":     cur_sector[0],
+                "sector_name":     cur_sector[1],
+                "summary_code":    cur_summary[0],
+                "summary_name":    cur_summary[1],
+                "u_summary_code":  cur_u_summary[0],
+                "u_summary_name":  cur_u_summary[1],
+                "detail_code":     c4,
+                "detail_name":     c5 or "",
+            })
+    return pd.DataFrame(out)
+
+
+def _find_naics_source() -> Path | None:
+    """OUTPUT_DIR 의 DETAIL 워크북 중 'NAICS Codes' 를 가진 첫 파일."""
+    candidates = [
+        "IOUse_Before_Redefinitions_PRO_DET.xlsx",
+        "IOUse_After_Redefinitions_PRO_DET.xlsx",
+        "IOMake_Before_Redefinitions_DET.xlsx",
+        "IOMake_After_Redefinitions_DET.xlsx",
+        "ImportMatrices_Before_Redefinitions_DET_2017.xlsx",
+    ]
+    for fn in candidates:
+        p = OUTPUT_DIR / fn
+        if p.exists():
+            return p
+    return None
+
+
 def build_classification_workbook(out_path: Path) -> None:
-    """RAW_ROOT 아래 캐시된 raw json 만으로 분류표 워크북을 만든다 (API 호출 없음)."""
+    """BEA 산업분류표 워크북을 만든다.
+
+    핵심 데이터: BEA DETAIL xlsx 의 'NAICS Codes' 시트 (= Sector → Summary →
+    U.Summary → Detail 공식 hierarchy). DETAIL 워크북이 없으면 SUMMARY/SECTOR
+    raw json 만으로 limited 분류표를 만든다.
+    """
     bold = Font(name="Arial", bold=True)
     header_fill = PatternFill("solid", start_color="D9E1F2")
 
     wb = Workbook()
     readme = wb.active
     readme.title = "README"
-    readme.cell(1, 1).value = "BEA Input-Output 산업분류표 (Sector / Summary / Detail)"
+    readme.cell(1, 1).value = "BEA Input-Output 산업분류표 (Sector → Summary → U.Summary → Detail 계층)"
     readme.cell(1, 1).font = Font(name="Arial", bold=True, size=14)
     readme_lines = [
         "",
-        "각 LEVEL 시트는 두 블록으로 구성됩니다:",
-        "  · 좌측 = 행(Commodities) — Use 표의 행 코드 (재화·서비스 + 부가가치/세금/합계)",
-        "  · 우측 = 열(Industries)  — Use 표의 열 코드 (산업 + 최종수요/합계)",
+        "BEA 가 발표하는 4 계층 산업 hierarchy:",
+        "  · Sector       (~16개)   가장 거친 분류. 코드 예: 11, 21, 31G, 44RT.",
+        "  · Summary      (~71개)   중간 분류. 코드 예: 111CA, 113FF, 211, 311FT.",
+        "  · U.Summary    (~140개)  Summary 와 Detail 사이의 사용자 그룹. 코드 예: 111, 112, 211.",
+        "  · Detail       (~405개)  가장 세분. 코드 예: 1111A0, 111200, 211000.",
         "",
-        "Type 분류:",
-        "  · Industry/Commodity         — 실제 산업·재화·서비스 (분석 대상)",
-        "  · ValueAdded                 — V001(피용자보수)/V003(영업잉여)/VABAS/VAPRO",
-        "  · Tax/Subsidy                — T00TOP, T00SUB, T00OTOP, T00OSUB",
-        "  · Total                      — T001/T005/T018/T019 합계 행·열",
-        "  · FinalDemand                — F010(소비)/F02*(투자)/F03*(재고)/F04*(수출)/F100(정부) 등",
-        "  · Special (Scrap/Used)       — 'Used' = 폐품·중고품 (산업 카운터파트 없음)",
-        "  · Special (Noncomparable)    — 'Other' = 비교불능수입 + 해외부문조정",
+        "시트 구성:",
+        "  · Hierarchy    — 모든 Detail 행 한 줄씩 + 그 부모 (Sector/Summary/U.Summary). lookup 용",
+        "  · Sector       — Sector 코드만 (이름 포함)",
+        "  · Summary      — Summary 코드 + 부모 Sector",
+        "  · U.Summary    — U.Summary 코드 + 부모 Summary + 부모 Sector",
+        "  · Detail       — Detail 코드 + 모든 부모",
+        "  · BEA_부가축   — Use/Make 표에서 본 V*/T*/F* 등 비-산업 코드 (분석 시 제외 대상)",
         "",
-        "수입표(Aᵐ)·국산표(Aᵈ) 도 같은 LEVEL 에서는 동일 코드 체계를 쓰므로",
-        "캐시된 raw/<type>_<level>/bea_YYYY.json 들의 union 만으로 충분합니다.",
-        "",
-        "스크립트: bea_io_download.py — build_classification_workbook()",
+        "출처: BEA DETAIL xlsx ('NAICS Codes' 시트). DETAIL 데이터 없으면 SUMMARY/SECTOR raw json fallback.",
+        "스크립트: bea_io_download.py — build_classification_workbook() / parse_bea_naics_hierarchy()",
     ]
     for i, line in enumerate(readme_lines, start=2):
         readme.cell(i, 1).value = line
     readme.column_dimensions["A"].width = 100
 
-    levels_written: list[tuple[str, int, int, int, int]] = []
+    naics_path = _find_naics_source()
+    if naics_path is None:
+        log.warning(
+            "BEA DETAIL xlsx 가 없어 hierarchy 시트를 만들 수 없습니다. "
+            "`download_bea_static_files()` 를 먼저 실행하세요. "
+            "raw json 만으로 limited 분류표를 작성합니다."
+        )
+        # Fallback: 기존 raw-json 만의 분류 (이전 버전과 동일한 구조)
+        return _build_classification_legacy(out_path, readme, readme_lines, wb)
+
+    log.info(f"[분류] hierarchy 소스: {naics_path.name}")
+    h = parse_bea_naics_hierarchy(naics_path)
+    log.info(f"[분류] hierarchy: detail {len(h)}개 행")
+
+    # Helper to write a level sheet with header row.
+    def _write_level_sheet(name: str, df: pd.DataFrame, columns: list[str]) -> None:
+        ws = wb.create_sheet(name)
+        ws.cell(1, 1).value = f"BEA {name} — 총 {len(df)}개"
+        ws.cell(1, 1).font = Font(name="Arial", bold=True, size=12)
+        for j, h_ in enumerate(columns, start=1):
+            c = ws.cell(3, j); c.value = h_; c.font = bold; c.fill = header_fill
+        for i, row in df.reset_index(drop=True).iterrows():
+            for j, col in enumerate(columns, start=1):
+                ws.cell(4 + i, j).value = row.get(col)
+        widths = {"sector_code": 10, "summary_code": 12, "u_summary_code": 14,
+                  "detail_code": 12,
+                  "sector_name": 50, "summary_name": 50,
+                  "u_summary_name": 50, "detail_name": 60}
+        for j, col in enumerate(columns, start=1):
+            from openpyxl.utils import get_column_letter as _gcl
+            ws.column_dimensions[_gcl(j)].width = widths.get(col, 18)
+        ws.freeze_panes = "A4"
+
+    # 1) Hierarchy (every detail row + parents) — main lookup sheet
+    _write_level_sheet(
+        "Hierarchy", h,
+        ["sector_code", "sector_name", "summary_code", "summary_name",
+         "u_summary_code", "u_summary_name", "detail_code", "detail_name"],
+    )
+
+    # 2) Sector — unique sector codes
+    sec = h.drop_duplicates("sector_code")[["sector_code", "sector_name"]]
+    _write_level_sheet("Sector", sec, ["sector_code", "sector_name"])
+
+    # 3) Summary — unique summary codes + parent sector
+    summ = h.drop_duplicates("summary_code")[
+        ["summary_code", "summary_name", "sector_code", "sector_name"]
+    ]
+    _write_level_sheet("Summary", summ,
+                       ["summary_code", "summary_name", "sector_code", "sector_name"])
+
+    # 4) U.Summary
+    usum = h.drop_duplicates("u_summary_code")[
+        ["u_summary_code", "u_summary_name",
+         "summary_code", "summary_name", "sector_code", "sector_name"]
+    ]
+    _write_level_sheet("U.Summary", usum,
+                       ["u_summary_code", "u_summary_name",
+                        "summary_code", "summary_name", "sector_code", "sector_name"])
+
+    # 5) Detail
+    _write_level_sheet("Detail", h,
+                       ["detail_code", "detail_name",
+                        "u_summary_code", "u_summary_name",
+                        "summary_code", "summary_name",
+                        "sector_code", "sector_name"])
+
+    # 6) BEA_부가축 — non-industry codes from raw json (V*/T*/F*/Special)
+    aux_rows: dict[str, str] = {}
+    aux_cols: dict[str, str] = {}
     for level in LEVELS:
-        rows_all: dict[str, str] = {}
-        cols_all: dict[str, str] = {}
         for ttype in TABLE_TYPES:
             raw_dir = RAW_ROOT / f"{ttype.lower()}_{level.lower()}"
             if not raw_dir.exists():
                 continue
-            rows_part, cols_part = collect_codes_from_raw(raw_dir)
-            for k, v in rows_part.items():
-                rows_all.setdefault(k, v)
-            for k, v in cols_part.items():
-                cols_all.setdefault(k, v)
-
-        if not rows_all and not cols_all:
-            log.info(f"[분류] {level}: 캐시된 raw json 없음 — 건너뜀")
-            continue
-
-        rdf = _codes_to_df(rows_all)
-        cdf = _codes_to_df(cols_all)
-
-        ws = wb.create_sheet(level.title())
-        n_real_rows = int((rdf["Type"] == "Industry/Commodity").sum())
-        n_real_cols = int((cdf["Type"] == "Industry/Commodity").sum())
+            r, c = collect_codes_from_raw(raw_dir)
+            aux_rows.update(r)
+            aux_cols.update(c)
+    aux_row_list = [(k, v, _classify_code(k))
+                    for k, v in sorted(aux_rows.items())
+                    if _classify_code(k) != "Industry/Commodity"]
+    aux_col_list = [(k, v, _classify_code(k))
+                    for k, v in sorted(aux_cols.items())
+                    if _classify_code(k) != "Industry/Commodity"]
+    if aux_row_list or aux_col_list:
+        ws = wb.create_sheet("BEA_부가축")
         ws.cell(1, 1).value = (
-            f"BEA — {level} 분류 — "
-            f"행 {len(rdf)}개 (실 commodity {n_real_rows}) | "
-            f"열 {len(cdf)}개 (실 industry {n_real_cols})"
+            f"BEA Use/Make 표의 부가축 코드 (산업·재화 아닌 행/열) — "
+            f"분석 시 X 매트릭스에서 제외 대상"
         )
         ws.cell(1, 1).font = Font(name="Arial", bold=True, size=12)
-
-        ws.cell(3, 1).value = "[행 = Commodities (Use 표의 행)]"
-        ws.cell(3, 1).font = bold
-        ws.cell(3, 5).value = "[열 = Industries (Use 표의 열)]"
-        ws.cell(3, 5).font = bold
-
-        for j, h in enumerate(["Code", "Name", "Type"], start=1):
-            cell = ws.cell(4, j); cell.value = h; cell.font = bold; cell.fill = header_fill
-        for j, h in enumerate(["Code", "Name", "Type"], start=5):
-            cell = ws.cell(4, j); cell.value = h; cell.font = bold; cell.fill = header_fill
-
-        for i, r in rdf.iterrows():
-            ws.cell(5 + i, 1).value = r["Code"]
-            ws.cell(5 + i, 2).value = r["Name"]
-            ws.cell(5 + i, 3).value = r["Type"]
-        for i, r in cdf.iterrows():
-            ws.cell(5 + i, 5).value = r["Code"]
-            ws.cell(5 + i, 6).value = r["Name"]
-            ws.cell(5 + i, 7).value = r["Type"]
-
+        ws.cell(3, 1).value = "[행 (부가가치/세금/합계)]"; ws.cell(3, 1).font = bold
+        ws.cell(3, 5).value = "[열 (최종수요/합계)]";    ws.cell(3, 5).font = bold
+        for j, h_ in enumerate(["Code", "Name", "Type"], start=1):
+            c = ws.cell(4, j); c.value = h_; c.font = bold; c.fill = header_fill
+        for j, h_ in enumerate(["Code", "Name", "Type"], start=5):
+            c = ws.cell(4, j); c.value = h_; c.font = bold; c.fill = header_fill
+        for i, (code, name, t) in enumerate(aux_row_list):
+            ws.cell(5 + i, 1).value = code
+            ws.cell(5 + i, 2).value = name
+            ws.cell(5 + i, 3).value = t
+        for i, (code, name, t) in enumerate(aux_col_list):
+            ws.cell(5 + i, 5).value = code
+            ws.cell(5 + i, 6).value = name
+            ws.cell(5 + i, 7).value = t
         ws.column_dimensions["A"].width = 12
         ws.column_dimensions["B"].width = 50
         ws.column_dimensions["C"].width = 22
@@ -680,26 +827,72 @@ def build_classification_workbook(out_path: Path) -> None:
         ws.column_dimensions["G"].width = 22
         ws.freeze_panes = "A5"
 
-        levels_written.append((level, len(rdf), len(cdf), n_real_rows, n_real_cols))
-        log.info(
-            f"[분류] {level}: 행 {len(rdf)}개(실 {n_real_rows}) / "
-            f"열 {len(cdf)}개(실 {n_real_cols}) 시트 작성"
-        )
-
-    if not levels_written:
-        log.warning("분류표 입력이 될 raw 캐시가 하나도 없습니다.")
-        return
-
+    # README 끝에 카운트 요약
     summary_row = len(readme_lines) + 3
-    readme.cell(summary_row, 1).value = "수록 LEVEL 요약 (행 총개수 / 실 commodity / 열 총개수 / 실 industry):"
+    readme.cell(summary_row, 1).value = (
+        f"수록: Sector {len(sec)} / Summary {len(summ)} / "
+        f"U.Summary {len(usum)} / Detail {len(h)} 산업"
+    )
     readme.cell(summary_row, 1).font = bold
-    for i, (lv, nr, nc, rr, cc) in enumerate(levels_written, start=1):
-        readme.cell(summary_row + i, 1).value = (
-            f"  · {lv:8s} — 행 {nr:>3d} (실 {rr:>3d}) / 열 {nc:>3d} (실 {cc:>3d})"
-        )
 
     wb.save(out_path)
     log.info(f"  → 저장 완료: {out_path}")
+    log.info(
+        f"[분류] hierarchy 워크북: Sector {len(sec)} / Summary {len(summ)} / "
+        f"U.Summary {len(usum)} / Detail {len(h)}"
+    )
+
+
+def _build_classification_legacy(
+    out_path: Path,
+    readme,
+    readme_lines: list[str],
+    wb: "Workbook",
+) -> None:
+    """DETAIL xlsx 가 없을 때 raw json 만으로 limited 분류표 만드는 폴백."""
+    bold = Font(name="Arial", bold=True)
+    header_fill = PatternFill("solid", start_color="D9E1F2")
+
+    levels_written: list[tuple[str, int, int, int, int]] = []
+    for level in LEVELS:
+        rows_all: dict[str, str] = {}
+        cols_all: dict[str, str] = {}
+        for ttype in TABLE_TYPES:
+            raw_dir = RAW_ROOT / f"{ttype.lower()}_{level.lower()}"
+            if not raw_dir.exists():
+                continue
+            r, c = collect_codes_from_raw(raw_dir)
+            for k, v in r.items():
+                rows_all.setdefault(k, v)
+            for k, v in c.items():
+                cols_all.setdefault(k, v)
+        if not rows_all and not cols_all:
+            continue
+        rdf = _codes_to_df(rows_all)
+        cdf = _codes_to_df(cols_all)
+        ws = wb.create_sheet(f"{level.title()}_legacy")
+        ws.cell(1, 1).value = f"BEA — {level} (raw json 폴백) — 행 {len(rdf)} / 열 {len(cdf)}"
+        ws.cell(1, 1).font = Font(name="Arial", bold=True, size=12)
+        for j, h in enumerate(["Code", "Name", "Type"], start=1):
+            c = ws.cell(3, j); c.value = h; c.font = bold; c.fill = header_fill
+        for j, h in enumerate(["Code", "Name", "Type"], start=5):
+            c = ws.cell(3, j); c.value = h; c.font = bold; c.fill = header_fill
+        for i, r in rdf.iterrows():
+            ws.cell(4 + i, 1).value = r["Code"]
+            ws.cell(4 + i, 2).value = r["Name"]
+            ws.cell(4 + i, 3).value = r["Type"]
+        for i, r in cdf.iterrows():
+            ws.cell(4 + i, 5).value = r["Code"]
+            ws.cell(4 + i, 6).value = r["Name"]
+            ws.cell(4 + i, 7).value = r["Type"]
+        levels_written.append((level, len(rdf), len(cdf), 0, 0))
+
+    summary_row = len(readme_lines) + 3
+    readme.cell(summary_row, 1).value = "DETAIL xlsx 미존재 → legacy 시트만 작성 (hierarchy 없음)"
+    readme.cell(summary_row, 1).font = bold
+
+    wb.save(out_path)
+    log.info(f"  → 저장 완료(legacy): {out_path}")
 
 
 # ==================================================================
