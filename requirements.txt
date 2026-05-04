@@ -6,3 +6,5 @@ openpyxl>=3.1.5
 xlrd
 networkx
 scipy
+requests
+python-dotenv

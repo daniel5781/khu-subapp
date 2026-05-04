@@ -2,3 +2,17 @@ __pycache__/
 *.pyc
 .DS_Store
 *.hwpx
+
+# Secrets
+.env
+
+# BEA download artifacts (cache + log) — regenerable from the script
+raw/
+bea_io_download.log
+
+# Claude Code local settings (user-specific)
+.claude/
+
+# Excel lock files (created while a workbook is open)
+~$*.xlsx
+~$*.xls

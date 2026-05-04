@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from functions import *
+import preprocessing
 import matplotlib.pyplot as plt
 import networkx as nx
 import re
@@ -11,23 +12,34 @@ from networkx.exception import PowerIterationFailedConvergence
 def main():
     st.sidebar.header("다운로드")
     st.title("산업연관데이터 DashBoard")
-    mode = st.radio('모드 선택', ['Korea(2010~2020)', 'Japan(2000~2020)', 'Korea(1990~2005)', 'Manual'])
-    if mode == 'Korea(2010~2020)':
-        first_idx = (6,2)
-        subplus_edit =False
-        number_of_label = 2
-    elif mode == 'Japan(2000~2020)':
-        first_idx = (6,2)
-        subplus_edit =False
-        number_of_label = 2
-    elif mode == 'Korea(1990~2005)':
-        first_idx = (5,2)
-        subplus_edit =True
-        number_of_label = 2
-    else:
-        first_idx = 0
-        subplus_edit =False
-        number_of_label = 2
+    mode = st.radio('모드 선택', preprocessing.MODES)
+    params = preprocessing.get_mode_params(mode)
+    first_idx = params.first_idx
+    subplus_edit = params.subplus_edit
+    number_of_label = params.number_of_label
+
+    # US 모드는 연도 선택을 따로 받음 — Use·Import 둘 다 가용한 연도 교집합만 노출.
+    us_year = None
+    if mode.startswith("US"):
+        avail_years = preprocessing.available_us_years(mode)
+        if not avail_years:
+            st.error(
+                f"`{mode}` 모드 데이터를 찾지 못했습니다. 저장소 루트에 "
+                f"`bea_use_table_all_years_summary.xlsx` 와 "
+                f"`bea_import_matrices_before_redefinitions_SUM_1997-2023.xlsx` "
+                f"(또는 단일년도 Import 파일) 가 있어야 합니다."
+            )
+        else:
+            us_year = st.selectbox(
+                f"연도 선택  (가용: {avail_years[0]} ~ {avail_years[-1]}, 총 {len(avail_years)}개)",
+                options=avail_years,
+                index=len(avail_years) - 1,
+            )
+            st.caption(
+                "업로드 파일: `bea_use_table_all_years_summary.xlsx` (BEA Use 다년도 워크북). "
+                "Import 매트릭스는 저장소의 `bea_import_matrices_*_SUM_1997-2023.xlsx` 또는 "
+                "`bea_import_matrix_summary_<연도>.xlsx` 가 코드에 의해 자동 결합됩니다."
+            )
 
     if 'number_of_divide' not in st.session_state:
         st.session_state['number_of_divide'] = 0
@@ -42,72 +54,20 @@ def main():
 
     def _k(x):
         return int(x) if x.isdigit() else x
-        
-    def find_string_values(df, first_idx):
-        # 특정 구간의 데이터 선택
-        selected_df = df.iloc[first_idx[0]:, first_idx[1]:]
 
-        # 문자열이 포함된 셀의 위치를 저장할 리스트
-        string_locations = []
-
-        # 모든 셀을 순회하며 문자열이 있는지 확인
-        for row_idx, row in selected_df.iterrows():
-            for col_idx, value in row.items():
-                if isinstance(value, str):  # 문자열인지 확인
-                    string_locations.append((row_idx, col_idx, value))
-
-        return string_locations
-    # 문자열이 포함된 위치를 NA로 대체하는 함수
-    def replace_string_with_na(df, string_locations):
-        for row_idx, col_idx, _ in string_locations:
-            df.iloc[row_idx, col_idx] = np.nan  # 해당 위치의 값을 pd.NA로 대체
-
-    def slice_until_first_non_nan_row(df):
-        # DataFrame의 맨 아래부터 위로 순회하며 NaN이 아닌 첫 번째 행 찾기
-        last_valid_index = None
-        for row_idx in reversed(range(df.shape[0])):  # 아래에서 위로 순회
-            if not df.iloc[row_idx].isna().all():  # NaN이 아닌 행을 찾으면
-                last_valid_index = row_idx
-                break
-
-        # NaN이 아닌 행까지 슬라이싱 (찾지 못한 경우 전체 슬라이스)
-        if last_valid_index is not None:
-            sliced_df = df.iloc[:last_valid_index + 1]
-        else:
-            sliced_df = pd.DataFrame()  # 모든 행이 NaN인 경우 빈 DataFrame 반환
-
-        return sliced_df, last_valid_index
-
-
-    # 파일 업로드 섹션s
+    # 파일 업로드 섹션
     st.session_state['uploaded_file'] = st.file_uploader("여기에 파일을 드래그하거나 클릭하여 업로드하세요.", type=['xls', 'xlsx'])
-    if 'df' not in st.session_state:
-        if st.session_state['uploaded_file']:
-            st.write(st.session_state['uploaded_file'].name)
-            st.session_state['df'] =load_data(st.session_state.uploaded_file, 0)
-            st.session_state['df_local'] =load_data(st.session_state.uploaded_file, 1)
-            #st.session_state['df'].iloc[first_idx[0]:, first_idx[1]:].replace(' ', pd.NA, inplace=True)
-            #st.session_state['df'].iloc[first_idx[0]:, first_idx[1]:].dropna(inplace = True)
-            # 문자열이 포함된 위치 찾기
-            string_values = find_string_values(st.session_state['df'], first_idx)
-            string_values_local = find_string_values(st.session_state['df_local'], first_idx)
-            # 문자열이 포함된 값을 NA로 대체
-            replace_string_with_na(st.session_state['df'], string_values)
-            replace_string_with_na(st.session_state['df_local'], string_values_local)
-            # 사용 예시
-            st.session_state['df'], last_valid_index = slice_until_first_non_nan_row(st.session_state['df'])
-            st.write(string_values)
-
-            st.session_state['df_local'], last_valid_index = slice_until_first_non_nan_row(st.session_state['df_local'])
-            st.write(string_values_local)
-
-            st.session_state['mid_ID_idx'] = get_mid_ID_idx(st.session_state['df'], first_idx)
-            st.session_state['mid_ID_idx_local'] = get_mid_ID_idx(st.session_state['df_local'], first_idx)
-
-            st.session_state['df'].iloc[first_idx[0]:, first_idx[1]:] = st.session_state['df'].iloc[first_idx[0]:, first_idx[1]:].apply(pd.to_numeric, errors='coerce')
-            st.session_state['df_local'].iloc[first_idx[0]:, first_idx[1]:] = st.session_state['df_local'].iloc[first_idx[0]:, first_idx[1]:].apply(pd.to_numeric, errors='coerce')
-            if subplus_edit:
-                st.session_state['df']=st.session_state['df'].iloc[:-1]
+    if 'df' not in st.session_state and st.session_state['uploaded_file']:
+        st.write(st.session_state['uploaded_file'].name)
+        result = preprocessing.load_workbook(
+            st.session_state['uploaded_file'], mode, us_year=us_year,
+        )
+        st.session_state['df']               = result.df
+        st.session_state['df_local']         = result.df_local
+        st.session_state['mid_ID_idx']       = result.mid_ID_idx
+        st.session_state['mid_ID_idx_local'] = result.mid_ID_idx_local
+        st.write(result.string_values)
+        st.write(result.string_values_local)
 
     if 'df' in st.session_state:
         uploaded_matrix_X = get_submatrix_withlabel(st.session_state['df'], first_idx[0], first_idx[1], st.session_state['mid_ID_idx'][0], st.session_state['mid_ID_idx'][1], first_idx, numberoflabel=number_of_label)
