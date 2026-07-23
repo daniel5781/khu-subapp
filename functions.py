@@ -324,13 +324,17 @@ def get_mid_ID_idx(df, first_idx):
 
 def insert_row_and_col(df, first_idx, mid_ID_idx, code, name, num_of_label):
     df_editing = df.copy()
-    df_editing.insert(loc=mid_ID_idx[1], column='a', value=np.nan, allow_duplicates=True)
+    # object dtype로 삽입해야 pandas 2.x에서 문자열 code/name 대입이 막히지 않음
+    # (np.nan 삽입 시 float64 열이 되어 'ZZZ' 대입이 TypeError로 실패)
+    _obj_col = pd.Series(np.nan, index=df_editing.index, dtype=object)
+    df_editing.insert(loc=mid_ID_idx[1], column='a', value=_obj_col, allow_duplicates=True)
     df_editing.iloc[first_idx[0]-num_of_label, mid_ID_idx[1]] = code
     df_editing.iloc[first_idx[0]-num_of_label+1, mid_ID_idx[1]] = name
     df_editing.iloc[first_idx[0]:, mid_ID_idx[1]] = 0
     df_editing.columns = range(df_editing.shape[1])
-    df_editing = df_editing.T   
-    df_editing.insert(loc=mid_ID_idx[0], column='a', value=np.nan, allow_duplicates=True)
+    df_editing = df_editing.T
+    _obj_row = pd.Series(np.nan, index=df_editing.index, dtype=object)
+    df_editing.insert(loc=mid_ID_idx[0], column='a', value=_obj_row, allow_duplicates=True)
     df_editing.iloc[first_idx[1]-num_of_label, mid_ID_idx[0]] = code
     df_editing.iloc[first_idx[1]-num_of_label+1, mid_ID_idx[0]] = name
     df_editing.iloc[first_idx[1]:, mid_ID_idx[0]] = 0

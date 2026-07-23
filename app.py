@@ -66,10 +66,44 @@ def main():
 
     # 파일 업로드 섹션
     st.session_state['uploaded_file'] = st.file_uploader("여기에 파일을 드래그하거나 클릭하여 업로드하세요.", type=['xls', 'xlsx'])
-    if 'df' not in st.session_state and st.session_state['uploaded_file']:
-        st.write(st.session_state['uploaded_file'].name)
+
+    # US 모드는 Use 파일이 저장소에 이미 있으므로, 업로드가 없으면 자동으로 그 파일을 사용.
+    # (직접 다른 워크북을 올리면 업로드본이 우선)
+    load_source = st.session_state['uploaded_file']
+    source_name = getattr(load_source, 'name', None)
+    if load_source is None and mode.startswith("US") and us_year is not None:
+        repo_use = preprocessing.us_use_file_path(mode)
+        if repo_use is not None and repo_use.exists():
+            load_source = str(repo_use)
+            source_name = repo_use.name
+            st.info(f"업로드 없이 저장소의 `{source_name}` 를 자동 사용합니다. (다른 파일을 올리면 그 파일을 씁니다.)")
+    st.session_state['uploaded_source_name'] = source_name
+
+    # 모드/연도/파일이 바뀌면 이전에 로드·편집한 파이프라인을 전부 비워 새로 로드.
+    # (안 그러면 모드를 바꿔도 직전 파일의 df 가 그대로 남아 "각 모드가 각각" 안 돌아감)
+    load_sig = (mode, us_year, source_name)
+    if st.session_state.get('_load_sig') != load_sig:
+        # 데이터/행렬 계열은 완전히 제거 (없으면 아래 로드 게이트가 새로 채움)
+        for _k_reset in [
+            'df', 'df_local', 'mid_ID_idx', 'mid_ID_idx_local',
+            'df_editing', 'df_editing_local',
+            'df_edited', 'df_edited_local',
+            'alpha_key', 'batch_df_clean', 'batch_meta', 'batch_preview_lines',
+            'threshold', 'threshold_cal', 'remove_positions',
+        ]:
+            st.session_state.pop(_k_reset, None)
+        # 하단에서 무조건 참조되는 카운터/로그는 기본값으로 재설정 (pop 하면 KeyError)
+        st.session_state['edit_ops'] = []
+        st.session_state['ids_simbol'] = {}
+        st.session_state['number_of_divide'] = 0
+        st.session_state['show_edited'] = False
+        st.session_state['data_editing_log'] = ''
+        st.session_state['_load_sig'] = load_sig
+
+    if 'df' not in st.session_state and load_source is not None:
+        st.write(source_name)
         result = preprocessing.load_workbook(
-            st.session_state['uploaded_file'], mode, us_year=us_year,
+            load_source, mode, us_year=us_year,
         )
         st.session_state['df']               = result.df
         st.session_state['df_local']         = result.df_local
@@ -135,7 +169,11 @@ def main():
 
         if alpha_file:
             # 원본 업로드 파일명(확장자 제외) - ZIP 매칭에만 사용
-            original_filename_no_ext = st.session_state["uploaded_file"].name.rsplit(".", 1)[0]
+            # US 자동로드 시 uploaded_file 이 None 이므로 저장해 둔 소스명을 사용
+            _src_name = st.session_state.get("uploaded_source_name") or getattr(
+                st.session_state.get("uploaded_file"), "name", ""
+            ) or ""
+            original_filename_no_ext = _src_name.rsplit(".", 1)[0]
 
             # 업로드 파일 변경 감지 (rerun에서도 중복 준비 방지)
             alpha_key = (alpha_file.name, len(alpha_file.getvalue()))

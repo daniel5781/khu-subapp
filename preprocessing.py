@@ -120,6 +120,15 @@ def get_us_config(mode: str) -> Dict[str, Any]:
     return dict(_US_CONFIG.get(mode, {}))
 
 
+def us_use_file_path(mode: str) -> Path | None:
+    """Repo path to the BEA Use workbook for a US mode, or None. The file ships
+    in the repo, so app.py can auto-load it when the user hasn't uploaded one."""
+    cfg = _US_CONFIG.get(mode)
+    if cfg is None:
+        return None
+    return Path(__file__).resolve().parent / cfg["use_filename"]
+
+
 def _find_string_values(df: pd.DataFrame, first_idx) -> List[Tuple[Any, Any, str]]:
     selected = df.iloc[first_idx[0]:, first_idx[1]:]
     out: List[Tuple[Any, Any, str]] = []
