@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Run / Develop
 
@@ -21,7 +21,7 @@ The project is a Korean-language Streamlit dashboard ("산업연관데이터 Das
 
 Where the code lives:
 
-- `app.py` — the entire UI flow inside `main()`. Linear top-to-bottom: each stage gates the next via `st.session_state` keys (`df` → `df_editing` → `df_edited` → `df_for_leontief` → `threshold` / `res_method_b`). Stages render only when their predecessor key exists. The module-level `render_centrality_tabs(cents, weighted, key_prefix)` helper renders the 6 centrality sub-tabs and is reused at all four network blocks (tn/tbn/n/bn); it takes the raw tuple returned by `calculate_network_centralities`. The Hub&Authority and constraints&efficiencies tabs also draw quadrant scatter plots via `_render_quadrant_scatter` (mean dashed guide lines; sectors registered in `ids_simbol` highlighted red) — `key_prefix` must be unique per call site or the download-button widget keys collide.
+- `app.py` — the entire UI flow inside `main()`. Linear top-to-bottom: each stage gates the next via `st.session_state` keys (`df` → `df_editing` → `df_edited` → `df_for_leontief` → `threshold` / `res_method_b`). Stages render only when their predecessor key exists. The module-level `render_centrality_tabs(cents)` helper renders the 6 centrality sub-tabs and is reused at all four network blocks (tn/tbn/n/bn); it takes the raw tuple returned by `calculate_network_centralities`.
 - `iolib/` — the backend package (all data manipulation, Leontief math, network extraction, centralities, batch-edit replay, download helpers). Split into `loading`, `batch_upload`, `editing`, `leontief`, `network`, `download`. `app.py` still does `from functions import *`; `functions.py` is now a thin shim that re-exports `iolib`, so any name in `iolib/__init__.py`'s `__all__` is callable in `app.py` without an explicit import. New code should `from iolib import ...` directly.
 - `preprocessing.py` — per-mode upload parsing; imports `load_data, get_mid_ID_idx` from `iolib`.
 
@@ -35,14 +35,10 @@ The radio at the top of `main()` selects how the uploaded Excel is parsed:
 | Japan (2000~2020) | (6, 2) | False | |
 | Korea (1990~2005) | (5, 2) | True | drops last row of `df` |
 | Manual | 0 | False | |
-| US(Supply Sector) | (6, 2) | False | `Supply_Sector_square.xlsx`, n=15, year sheets 1997~2024 |
-| US(Supply Summary) | (6, 2) | False | `Supply_Summary_square.xlsx`, n=71, year sheets 1997~2024 |
 
 `first_idx` = `(row, col)` where the numeric block starts. The two rows/cols immediately before it are labels (`number_of_label = 2`: code + name). `mid_ID_idx`, computed by `get_mid_ID_idx`, is the boundary between intermediate transactions and final-demand / value-added regions. Together they partition the table into four labeled sub-matrices: **X** (top-left intermediate), **R** (bottom-left value-added), **C** (top-right final demand), and the bottom-right is unused.
 
 The uploader expects a **two-sheet** workbook: sheet 0 is the global table, sheet 1 is the local/domestic counterpart. Both are loaded into `df` / `df_local` and edits are applied to both in parallel.
-
-US modes instead read one **BEA Domestic Supply square** workbook (commodity × industry, rows/cols pre-aligned to the same code set; ships in the repo root and auto-loads when nothing is uploaded). `_build_bok_layout_supply` in `preprocessing.py` repacks the selected year sheet into the BoK layout — SUBTOTAL/중간투입계 are recomputed from the X block (file totals carry ±1 rounding that breaks `get_mid_ID_idx`), the supply-composition columns (T007..T016) are preserved in the C block, 최종수요계 = T016 − ΣX row, 부가가치계 = 총공급 − ΣX col ≈ 0, and `df_local` is a copy of `df` (a supply table has no import-sheet counterpart). Because column sums of A are ≈ 1, the Leontief inverse is numerically explosive in these modes — the meaningful outputs are the network-extraction and centrality stages.
 
 ### Editing pipeline (and why `edit_ops` exists)
 

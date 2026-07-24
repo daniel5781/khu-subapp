@@ -1,0 +1,331 @@
+{
+  "load.df": {
+    "shape": [
+      96,
+      102
+    ],
+    "n_finite": 9094,
+    "sum": 70799411035.0,
+    "abs_sum": 70843191127.0,
+    "mean": 7785288.215857
+  },
+  "load.df_local": {
+    "shape": [
+      90,
+      95
+    ],
+    "n_finite": 7989,
+    "sum": 3983723623.0,
+    "abs_sum": 3986914951.0,
+    "mean": 498651.098135
+  },
+  "load.mid": [
+    89,
+    85
+  ],
+  "load.mid_local": [
+    89,
+    85
+  ],
+  "nonzero.df": {
+    "shape": [
+      96,
+      102
+    ],
+    "n_finite": 9094,
+    "sum": 70799411035.0,
+    "abs_sum": 70843191127.0,
+    "mean": 7785288.215857
+  },
+  "nonzero.mid": [
+    89,
+    85
+  ],
+  "submatrix.X": {
+    "shape": [
+      86,
+      86
+    ],
+    "n_finite": 7224,
+    "sum": 10084056344.0,
+    "abs_sum": 10086508928.0,
+    "mean": 1395910.346622
+  },
+  "A": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 6972,
+    "sum": 49.1699,
+    "abs_sum": 49.3167,
+    "mean": 0.007052
+  },
+  "L_direct": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 0,
+    "sum": 0.0,
+    "abs_sum": 0.0,
+    "mean": null
+  },
+  "leontief.with_label": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 7055,
+    "sum": 7184.0036,
+    "abs_sum": 7184.0875,
+    "mean": 1.018285
+  },
+  "leontief.without_label": {
+    "shape": [
+      83,
+      83
+    ],
+    "n_finite": 6889,
+    "sum": 212.0036,
+    "abs_sum": 212.0875,
+    "mean": 0.030774
+  },
+  "series.N0": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 0,
+    "sum": 0.0,
+    "abs_sum": 0.0,
+    "mean": null
+  },
+  "series.N": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 0,
+    "sum": 0.0,
+    "abs_sum": 0.0,
+    "mean": null
+  },
+  "series.Diagon": {
+    "shape": [
+      85,
+      85
+    ],
+    "n_finite": 7140,
+    "sum": 0.0,
+    "abs_sum": 0.0,
+    "mean": 0.0
+  },
+  "methodB.Bc": {
+    "shape": [
+      83,
+      83
+    ],
+    "n_finite": 6889,
+    "sum": 118.55,
+    "abs_sum": 118.55,
+    "mean": 0.017209
+  },
+  "methodB.Q": {
+    "shape": [
+      83,
+      83
+    ],
+    "n_finite": 6889,
+    "sum": 6465.0,
+    "abs_sum": 6465.0,
+    "mean": 0.938453
+  },
+  "methodB.info": {
+    "final_t": 2,
+    "converged": true,
+    "epsilon": 0.0001,
+    "delta": 0.01
+  },
+  "methodA.threshold": 0.03,
+  "binary": {
+    "shape": [
+      83,
+      83
+    ],
+    "n_finite": 6889,
+    "sum": 1114.0,
+    "abs_sum": 1114.0,
+    "mean": 0.161707
+  },
+  "undirected": {
+    "shape": [
+      83,
+      83
+    ],
+    "n_finite": 6889,
+    "sum": 2014.0,
+    "abs_sum": 2014.0,
+    "mean": 0.29235
+  },
+  "cent.degree": {
+    "shape": [
+      83,
+      2
+    ],
+    "n_finite": 166,
+    "sum": 2228.0,
+    "abs_sum": 2228.0,
+    "mean": 13.421687
+  },
+  "cent.bc": {
+    "shape": [
+      83,
+      1
+    ],
+    "n_finite": 83,
+    "sum": 0.9139,
+    "abs_sum": 0.9139,
+    "mean": 0.011011
+  },
+  "cent.cc": {
+    "shape": [
+      83,
+      2
+    ],
+    "n_finite": 166,
+    "sum": 55.4049,
+    "abs_sum": 55.4049,
+    "mean": 0.333764
+  },
+  "cent.ev": {
+    "shape": [
+      83,
+      2
+    ],
+    "n_finite": 166,
+    "sum": 13.1792,
+    "abs_sum": 13.1792,
+    "mean": 0.079393
+  },
+  "cent.hi": {
+    "shape": [
+      83,
+      2
+    ],
+    "n_finite": 166,
+    "sum": 2.0,
+    "abs_sum": 2.0,
+    "mean": 0.012048
+  },
+  "cent.kim": {
+    "shape": [
+      83,
+      2
+    ],
+    "n_finite": 166,
+    "sum": 55.1659,
+    "abs_sum": 55.1659,
+    "mean": 0.332325
+  },
+  "kim.constraint": {
+    "shape": [
+      83
+    ],
+    "n_finite": 83,
+    "sum": 10.9002,
+    "abs_sum": 10.9002,
+    "mean": 0.131328
+  },
+  "kim.efficiency": {
+    "shape": [
+      83
+    ],
+    "n_finite": 83,
+    "sum": 44.2657,
+    "abs_sum": 44.2657,
+    "mean": 0.533322
+  },
+  "edit.insert": {
+    "shape": [
+      97,
+      103
+    ],
+    "n_finite": 9285,
+    "sum": 70799411035.0,
+    "abs_sum": 70843191127.0,
+    "mean": 7625138.506731
+  },
+  "edit.insert.mid": [
+    90,
+    86
+  ],
+  "edit.transfer": {
+    "shape": [
+      97,
+      103
+    ],
+    "n_finite": 9285,
+    "sum": 70799411035.0,
+    "abs_sum": 70842984107.0,
+    "mean": 7625138.506731
+  },
+  "edit.reduce": {
+    "shape": [
+      97,
+      103
+    ],
+    "n_finite": 9285,
+    "sum": 70800637327.0,
+    "abs_sum": 70842984107.0,
+    "mean": 7625270.579106
+  },
+  "edit.remove_zero": {
+    "shape": [
+      96,
+      102
+    ],
+    "n_finite": 9094,
+    "sum": 70799411035.0,
+    "abs_sum": 70843191127.0,
+    "mean": 7785288.215857
+  },
+  "edit.remove_zero.mid": [
+    89,
+    85
+  ],
+  "edit.replay": {
+    "shape": [
+      97,
+      103
+    ],
+    "n_finite": 9285,
+    "sum": 70799411035.0,
+    "abs_sum": 70842984107.0,
+    "mean": 7625138.506731
+  },
+  "edit.replay.mid": [
+    90,
+    86
+  ],
+  "make_col": {
+    "shape": [
+      84,
+      1
+    ],
+    "n_finite": 83,
+    "sum": 3403.0,
+    "abs_sum": 3403.0,
+    "mean": 41.0
+  },
+  "make_table": {
+    "shape": [
+      84,
+      3
+    ],
+    "n_finite": 166,
+    "sum": 6889.0,
+    "abs_sum": 6889.0,
+    "mean": 41.5
+  }
+}

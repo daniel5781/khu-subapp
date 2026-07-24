@@ -12,6 +12,14 @@ Upload contract for non-US modes: sheet 0 = Total Transactions Table
 (생산자가격), sheet 1 = Import Transactions Table (생산자가격). Both come in
 the BoK layout where labels are at the first `number_of_label` rows/cols and
 the numeric block starts at `first_idx`.
+
+US modes use BEA "Domestic Supply of Commodities by Industries" square
+workbooks (`Supply_Sector_square.xlsx` / `Supply_Summary_square.xlsx`), one
+year per sheet (1997~2024). Rows(상품)와 열(산업)이 같은 코드 집합을 갖도록
+미리 정방으로 정리된 파일이며, `_build_bok_layout_supply` 가 이를 한국은행
+레이아웃(first_idx=(6,2))으로 재구성해 이후 파이프라인이 한국 모드와 동일하게
+동작한다. 공급표에는 수입표(sheet 1) 대응물이 없으므로 df_local 은 df 의
+복사본을 쓴다.
 """
 from __future__ import annotations
 
@@ -22,7 +30,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from functions import load_data, get_mid_ID_idx
+from iolib import load_data, get_mid_ID_idx
 
 
 @dataclass(frozen=True)
@@ -48,8 +56,8 @@ MODES: List[str] = [
     "Japan(2000~2020)",
     "Korea(1990~2005)",
     "Manual",
-    "US(BEA Summary)",
-    "US(BEA Detail)",
+    "US(Supply Sector)",
+    "US(Supply Summary)",
 ]
 
 _PARAMS = {
@@ -57,58 +65,32 @@ _PARAMS = {
     "Japan(2000~2020)": ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
     "Korea(1990~2005)": ModeParams(first_idx=(5, 2), subplus_edit=True,  number_of_label=2),
     "Manual":           ModeParams(first_idx=0,      subplus_edit=False, number_of_label=2),
-    "US(BEA Summary)":  ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
-    "US(BEA Detail)":   ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
+    "US(Supply Sector)":  ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
+    "US(Supply Summary)": ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
 }
 
 
-# Where (codes, names, data) live in each BEA xlsx flavor (0-indexed row positions).
-# Canonical layout (after _normalize_bea_xlsx) is title=0, codes=1, names=2, data=3+,
-# which is what _square_industry_codes and _build_bok_layout expect.
-@dataclass(frozen=True)
-class HeaderLayout:
-    title_row: int
-    codes_row: int
-    names_row: int
-    data_start: int
-
-# SUMMARY-level files written by `bea_io_download.py`'s `write_matrix_to_sheet`
-# (codes above names, no extra header rows) — already canonical, no normalization.
-_LAYOUT_SUMMARY_USE = HeaderLayout(0, 1, 2, 3)
-# BEA's Import Matrix multi-year & single-year files — 5 header rows then codes/names.
-_LAYOUT_SUMMARY_IMPORT = HeaderLayout(0, 5, 6, 7)
-# BEA's official DETAIL files (Use/Make/Import) — names ABOVE codes (rows 4 vs 5).
-_LAYOUT_DETAIL = HeaderLayout(0, 5, 4, 6)
-
-
-# US-only config. `import_files` is a priority list — the first file in repo whose
-# sheet contains the requested year wins. Single-year fallbacks may use {year}.
+# US-only config — BEA Domestic Supply square workbooks (연도별 시트 1997~2024).
 _US_CONFIG: Dict[str, Dict[str, Any]] = {
-    "US(BEA Summary)": {
-        "level": "Summary",
-        "use_filename": "bea_use_table_all_years_summary.xlsx",
-        "use_layout": _LAYOUT_SUMMARY_USE,
-        "import_files": [
-            "bea_import_matrices_before_redefinitions_SUM_1997-2023.xlsx",
-            "bea_import_matrices_after_redefinitions_SUM_1997-2023.xlsx",
-            "bea_import_matrix_summary_{year}.xlsx",   # single-year fallback (e.g. 2024)
-        ],
-        "import_layout": _LAYOUT_SUMMARY_IMPORT,
+    "US(Supply Sector)": {
+        "level": "Sector",       # 15개 대분류 산업
+        "use_filename": "Supply_Sector_square.xlsx",
     },
-    "US(BEA Detail)": {
-        "level": "Detail",
-        "use_filename": "IOUse_Before_Redefinitions_PRO_DET.xlsx",
-        "use_layout": _LAYOUT_DETAIL,
-        "import_files": [
-            # BEA's "ImportMatrices_Before_Redefinitions_DET_2017.xlsx" actually
-            # contains 2007/2012/2017 sheets — the most-recent file is the only
-            # one needed at DETAIL level.
-            "ImportMatrices_Before_Redefinitions_DET_2017.xlsx",
-            "ImportMatrices_After_Redefinitions_DET_2017.xlsx",
-        ],
-        "import_layout": _LAYOUT_DETAIL,
+    "US(Supply Summary)": {
+        "level": "Summary",      # 71개 중분류 산업
+        "use_filename": "Supply_Summary_square.xlsx",
     },
 }
+
+# Supply_*_square.xlsx 내부 고정 레이아웃 (0-index).
+#   row 5 = 열 코드(col 2..), row 6 = ['IOCode','Name', 열 이름...],
+#   row 7.. = 상품(commodity) 행 (col 0=코드, col 1=이름),
+#   마지막 행 = 'Total industry supply' (col 0 은 빈칸).
+_SUPPLY_CODES_ROW = 5
+_SUPPLY_NAMES_ROW = 6
+_SUPPLY_DATA_START = 7
+# 산업 블록 오른쪽의 부속(공급 구성) 열 중 총공급(구매자가격) 열 코드.
+_SUPPLY_TOTAL_COL = "T016"
 
 
 def get_mode_params(mode: str) -> ModeParams:
@@ -194,33 +176,36 @@ def _load_two_sheet(uploaded_file, params: ModeParams) -> LoadResult:
 
 
 # ---------------------------------------------------------------------------
-# US (BEA) loader — industry × industry square shortcut
+# US (BEA Domestic Supply) loader — 상품 × 산업 정방 공급표
 # ---------------------------------------------------------------------------
 #
-# BEA publishes Use Tables (Total) and Import Matrices in commodity × industry
-# (rectangular) form, which the dashboard's `(I − A)^-1` math can't handle.
-# The user picked the "industry-technology diagonalization" shortcut: keep only
-# the rows/cols whose codes appear on both axes (the natural square subset),
-# and pack the result into the Korean BoK layout (first_idx=(6,2)) so the rest
-# of the pipeline runs unchanged.
+# Supply_*_square.xlsx 는 BEA "Domestic Supply of Commodities by Industries"
+# 표에서 행(상품)과 열(산업)이 같은 코드 집합이 되도록 비교불능 행(Used/Other)
+# 을 제거한 정방 파일이다. 이를 한국은행 레이아웃(first_idx=(6,2))으로 재구성해
+# 이후 파이프라인(편집 → Leontief → 네트워크)이 한국 모드와 동일하게 돌아간다.
 #
-# Synthesized layout per loaded sheet:
+# Synthesized layout per sheet (n = 산업 수, k = 부속 공급구성 열 수):
 #
-#                col 0   col 1    cols 2..2+n-1   col 2+n     col 2+n+1     col 2+n+2
-#   row 0        title  ─       ─              ─           ─             ─
-#   row 1        year   ─       ─              ─           ─             ─
-#   row 2        note   ─       ─              ─           ─             ─
-#   row 3        units  ─       ─              ─           ─             ─
-#   row 4        ─      ─       industry codes   SUBTOTAL    FINAL_DEMAND  TOTAL
-#   row 5        ─      ─       industry names  중간수요계  최종수요계   총산출
-#   row 6..6+n-1 code   name    X_ij           Σ X row     Σ FD row      Σ X row + FD
-#   row 6+n      ─      중간투입계  Σ X col      ─           ─             ─
-#   row 6+n+1    ─      부가가치계  VA per col   ─           ─             ─
-#   row 6+n+2    ─      총투입계   total_out_per_col ─       ─             ─
+#                col 0   col 1     cols 2..2+n-1   col 2+n    cols 2+n+1..2+n+k  col 2+n+k+1   col 2+n+k+2
+#   row 0        title   ─        ─              ─          ─                 ─             ─
+#   row 1        year    ─        ─              ─          ─                 ─             ─
+#   row 2        note    ─        ─              ─          ─                 ─             ─
+#   row 3        units   ─        ─              ─          ─                 ─             ─
+#   row 4        ─       ─        industry codes  SUBTOTAL   T007..T016 코드    FINAL_DEMAND  TOTAL
+#   row 5        ─       ─        industry names  중간수요계  (파일 원본 이름)    최종수요계     총산출
+#   row 6..6+n-1 code    name     X_ij            Σ X row    파일 원본 값        T016-Σ X row  T016
+#   row 6+n      ─       중간투입계  Σ X col        ─          ─                 ─             ─
+#   row 6+n+1    ─       부가가치계  총공급-Σ X col  ─          ─                 ─             ─
+#   row 6+n+2    ─       총투입계   총공급(파일 값)  ─          ─                 ─             ─
 #
 # `get_mid_ID_idx` walks the first data row, stopping at the SUBTOTAL cell,
-# which lands `mid_ID_idx` at (6+n, 2+n). Downstream slicing then picks up the
-# 최종수요계 column (matched by Korean label string in `app.py`).
+# which lands `mid_ID_idx` at (6+n, 2+n). SUBTOTAL/중간투입계 는 파일의
+# T007/Total 행을 그대로 쓰지 않고 X 블록에서 다시 계산한다 — 파일 값은 ±1
+# 반올림 차이가 있어 경계 탐지(±0.001 허용)가 어긋날 수 있기 때문.
+#
+# ⚠️ 공급표 특성상 열합계(Σ X col) ≈ 총공급이라 부가가치계 ≈ 0 이고 투입계수
+# 행렬의 열합이 1에 매우 가깝다. (I-A)⁻¹ 는 수치적으로 매우 불안정하므로 이
+# 모드의 의미 있는 산출물은 네트워크 추출·중심성 분석 쪽이다.
 
 def _to_float_or_zero(x) -> float:
     if x is None:
@@ -236,222 +221,137 @@ def _to_float_or_zero(x) -> float:
         return 0.0
 
 
-def _normalize_bea_xlsx(df: pd.DataFrame, layout: HeaderLayout) -> pd.DataFrame:
-    """Reformat any BEA xlsx into the canonical layout used by the rest of this
-    module: row 0 = title, row 1 = column codes, row 2 = column names, row 3+
-    = data with row codes in col 0 and row descriptions in col 1.
+def _build_bok_layout_supply(raw: pd.DataFrame, *, level: str, year: int) -> pd.DataFrame:
+    """BEA Domestic Supply square 시트 하나를 한국은행 레이아웃으로 재구성한다.
+    See module-level diagram for the output shape."""
+    if str(raw.iat[_SUPPLY_NAMES_ROW, 0]).strip() != "IOCode":
+        raise ValueError(
+            f"Supply square 파일 형식이 아닙니다 (셀 [{_SUPPLY_NAMES_ROW}, 0] 이 'IOCode' 가 아님). "
+            f"`Supply_Sector_square.xlsx` 또는 `Supply_Summary_square.xlsx` 를 업로드하세요."
+        )
 
-    This handles the difference between BEA's SUMMARY-level files (codes above
-    names) and DETAIL files (names above codes), and the extra header rows in
-    Import Matrix workbooks."""
-    title = df.iloc[[layout.title_row]].reset_index(drop=True)
-    codes = df.iloc[[layout.codes_row]].reset_index(drop=True)
-    names = df.iloc[[layout.names_row]].reset_index(drop=True)
-    data = df.iloc[layout.data_start:].reset_index(drop=True)
-    return pd.concat([title, codes, names, data], ignore_index=True)
+    col_codes = [str(c).strip() for c in raw.iloc[_SUPPLY_CODES_ROW, 2:].tolist()]
+    col_names = [str(c) for c in raw.iloc[_SUPPLY_NAMES_ROW, 2:].tolist()]
+    col_pos = {c: 2 + j for j, c in enumerate(col_codes)}
+    name_for = {c: col_names[j] for j, c in enumerate(col_codes)}
+    if _SUPPLY_TOTAL_COL not in col_pos:
+        raise ValueError(f"총공급 열 `{_SUPPLY_TOTAL_COL}` 을 찾지 못했습니다 — Supply square 파일이 맞는지 확인하세요.")
 
+    # 상품(행) 블록: col 0 에 코드가 있는 행들. 마지막 'Total industry supply'
+    # 행은 이름으로 식별해 제외한다 (Sector 파일은 코드 없음, Summary 는 'T017').
+    row_pos: Dict[str, int] = {}
+    total_supply_row_idx = None
+    for r in range(_SUPPLY_DATA_START, raw.shape[0]):
+        if "total industry supply" in str(raw.iat[r, 1]).lower():
+            total_supply_row_idx = r
+            continue
+        code = raw.iat[r, 0]
+        if code is None or (isinstance(code, float) and np.isnan(code)):
+            continue
+        row_pos[str(code).strip()] = r
+    if total_supply_row_idx is None:
+        raise ValueError("'Total industry supply' 행을 찾지 못했습니다 — Supply square 파일이 맞는지 확인하세요.")
 
-# Row-code candidates — first match wins.
-# SUMMARY/SECTOR uses 4-char codes; DETAIL uses 6-char (T018 → T008, etc.).
-_TOTAL_OUTPUT_ROW_CANDIDATES = ("T018", "T008")
-_TOTAL_VA_ROW_CANDIDATES = ("VAPRO", "VABAS", "T006")
-# Components for explicit VA fallback (when no single total row exists).
-_VA_PLUS_CODES = ("V001", "V003", "V00100", "V00300", "T00OTOP", "T00TOP", "V00200")
-_VA_MINUS_CODES = ("T00OSUB", "T00SUB")
-
-
-def _square_industry_codes(use_df: pd.DataFrame, imp_df: pd.DataFrame) -> List[str]:
-    """Codes that appear as both a row header (commodity) and a column header
-    (industry) in BOTH workbooks. Order is taken from the Use file's column
-    order so the resulting block is industry-by-industry from the Use POV."""
-    use_cols = [str(c) for c in use_df.iloc[1, 2:].tolist()]
-    use_rows = {str(c) for c in use_df.iloc[3:, 0].tolist()}
-    imp_cols = {str(c) for c in imp_df.iloc[1, 2:].tolist()}
-    imp_rows = {str(c) for c in imp_df.iloc[3:, 0].tolist()}
-    return [c for c in use_cols if c and c in use_rows and c in imp_cols and c in imp_rows]
-
-
-def _build_bok_layout(
-    bea_df: pd.DataFrame,
-    industry_codes: List[str],
-    *,
-    title: str,
-    year: int,
-    has_va: bool,
-    total_out_override: Dict[str, float] | None = None,
-) -> pd.DataFrame:
-    """Repack a BEA-format DataFrame (first_idx=(3, 2)) into the Korean BoK
-    layout (first_idx=(6, 2)) restricted to the industry × industry square
-    block. See module-level diagram for the output shape.
-
-    total_out_override : industry_code → industry_output map. When provided,
-        used as the BoK 총투입계 row instead of T018. The Import workbook MUST
-        use Use 표's T018 here, because BoK normalizes Aᵐ by the same industry
-        output as A; using Import 표's own column sum would normalize by total
-        imports per industry, which inflates Aᵐ and explodes (I − Aᵈ)⁻¹.
-    """
+    industry_codes = [c for c in col_codes if c in row_pos]
     n = len(industry_codes)
-    use_col_codes = [str(c) for c in bea_df.iloc[1, 2:].tolist()]
-    use_row_codes = [str(c) for c in bea_df.iloc[3:, 0].tolist()]
-    use_col_names = [str(c) for c in bea_df.iloc[2, 2:].tolist()]
+    if n < 2:
+        raise ValueError(
+            f"행(상품)과 열(산업)이 공유하는 코드가 {n}개뿐입니다 — 정방 정렬에 실패했습니다."
+        )
 
-    col_pos = {c: 2 + i for i, c in enumerate(use_col_codes)}
-    row_pos = {c: 3 + i for i, c in enumerate(use_row_codes)}
-    name_for = {c: use_col_names[i] for i, c in enumerate(use_col_codes)}
-    industry_set = set(industry_codes)
-    code_to_pos = {c: i for i, c in enumerate(industry_codes)}
-
-    # X block (n × n) — industry × industry
     X = np.zeros((n, n), dtype=float)
     for i, ri in enumerate(industry_codes):
         for j, ci in enumerate(industry_codes):
-            X[i, j] = _to_float_or_zero(bea_df.iat[row_pos[ri], col_pos[ci]])
+            X[i, j] = _to_float_or_zero(raw.iat[row_pos[ri], col_pos[ci]])
 
-    # Final-demand sum per row: cells in cols whose code is neither industry nor T-total.
-    fd_sum = np.zeros(n, dtype=float)
-    for i, ri in enumerate(industry_codes):
-        r_idx = row_pos[ri]
-        for j, cc in enumerate(use_col_codes):
-            if cc in industry_set or cc.startswith('T'):
-                continue
-            fd_sum[i] += _to_float_or_zero(bea_df.iat[r_idx, 2 + j])
+    # 부속(공급 구성) 열: 산업이 아닌 열 전부 (T007, MCIF, ..., T016) —
+    # 파일 원본 값·이름 그대로 C 블록에 보존한다.
+    extra_codes = [c for c in col_codes if c not in row_pos and c and c.lower() != "nan"]
+    k = len(extra_codes)
 
-    # VA per col (Use file only — Import has no VA rows).
-    # Single-total row preferred (VAPRO/VABAS at SUMMARY, T006 at DETAIL); otherwise
-    # explicit sum V001+V003+(T00OTOP-T00OSUB)+(T00TOP-T00SUB) — DETAIL uses 6-char
-    # variants V00100/V00300/V00200.
-    # NOTE: T018/T008 are industry total output, NOT VA components — never summed.
-    va_per_col = np.zeros(n, dtype=float)
-    if has_va:
-        va_total_code = next((c for c in _TOTAL_VA_ROW_CANDIDATES if c in row_pos), None)
-        if va_total_code is not None:
-            r = row_pos[va_total_code]
-            for ci in industry_codes:
-                va_per_col[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
-        else:
-            for ci in industry_codes:
-                cidx = col_pos[ci]
-                acc = 0.0
-                for code in _VA_PLUS_CODES:
-                    if code in row_pos:
-                        acc += _to_float_or_zero(bea_df.iat[row_pos[code], cidx])
-                for code in _VA_MINUS_CODES:
-                    if code in row_pos:
-                        acc -= _to_float_or_zero(bea_df.iat[row_pos[code], cidx])
-                va_per_col[code_to_pos[ci]] = acc
+    t016 = np.array([
+        _to_float_or_zero(raw.iat[row_pos[c], col_pos[_SUPPLY_TOTAL_COL]]) for c in industry_codes
+    ])
+    total_supply = np.array([
+        _to_float_or_zero(raw.iat[total_supply_row_idx, col_pos[c]]) for c in industry_codes
+    ])
 
-    # Total output per col (= 총투입계 = industry output): T018 (SUMMARY/SECTOR) or
-    # T008 (DETAIL). For Import the caller must pass total_out_override (= Use's
-    # T018/T008) so BoK Aᵐ is normalized by the same industry output as A.
-    total_out = np.zeros(n, dtype=float)
-    if total_out_override is not None:
-        for ci in industry_codes:
-            total_out[code_to_pos[ci]] = float(total_out_override.get(ci, 0.0))
-    else:
-        out_code = next((c for c in _TOTAL_OUTPUT_ROW_CANDIDATES if c in row_pos), None)
-        if out_code is not None:
-            r = row_pos[out_code]
-            for ci in industry_codes:
-                total_out[code_to_pos[ci]] = _to_float_or_zero(bea_df.iat[r, col_pos[ci]])
-        else:
-            for j_x in range(n):
-                total_out[j_x] = X[:, j_x].sum() + va_per_col[j_x]
+    row_subtotals = X.sum(axis=1)
+    col_subtotals = X.sum(axis=0)
+    fd = t016 - row_subtotals          # 총공급(구매자가격) − 산업공급계
+    va = total_supply - col_subtotals  # ≈ 0 (반올림 잔차) — 공급표엔 부가가치 행이 없음
 
     # Compose canonical layout.
     n_rows = 6 + n + 3
-    n_cols = 2 + n + 3
+    n_cols = 2 + n + 1 + k + 2
     out = pd.DataFrame(np.nan, index=range(n_rows), columns=range(n_cols), dtype=object)
 
-    out.iat[0, 0] = title
+    out.iat[0, 0] = f"BEA Domestic Supply — {level} {year}"
     out.iat[1, 0] = str(year)
-    out.iat[2, 0] = 'Producer Prices'
-    out.iat[3, 0] = 'Unit: Millions of USD'
+    out.iat[2, 0] = "Domestic supply of commodities by industries (square)"
+    out.iat[3, 0] = "Unit: Millions of USD"
 
     for j, code in enumerate(industry_codes):
         out.iat[4, 2 + j] = code
         out.iat[5, 2 + j] = name_for.get(code, code)
-    out.iat[4, 2 + n]     = 'SUBTOTAL'
-    out.iat[5, 2 + n]     = '중간수요계'
-    out.iat[4, 2 + n + 1] = 'FINAL_DEMAND'
-    out.iat[5, 2 + n + 1] = '최종수요계'
-    out.iat[4, 2 + n + 2] = 'TOTAL'
-    out.iat[5, 2 + n + 2] = '총산출'
+    out.iat[4, 2 + n] = "SUBTOTAL"
+    out.iat[5, 2 + n] = "중간수요계"
+    for j, code in enumerate(extra_codes):
+        out.iat[4, 2 + n + 1 + j] = code
+        out.iat[5, 2 + n + 1 + j] = name_for.get(code, code)
+    out.iat[4, 2 + n + 1 + k] = "FINAL_DEMAND"
+    out.iat[5, 2 + n + 1 + k] = "최종수요계"
+    out.iat[4, 2 + n + 1 + k + 1] = "TOTAL"
+    out.iat[5, 2 + n + 1 + k + 1] = "총산출"
 
-    row_subtotals = X.sum(axis=1)
-    col_subtotals = X.sum(axis=0)
     for i, code in enumerate(industry_codes):
         r = 6 + i
         out.iat[r, 0] = code
         out.iat[r, 1] = name_for.get(code, code)
         for j in range(n):
             out.iat[r, 2 + j] = X[i, j]
-        out.iat[r, 2 + n]     = row_subtotals[i]
-        out.iat[r, 2 + n + 1] = fd_sum[i]
-        out.iat[r, 2 + n + 2] = row_subtotals[i] + fd_sum[i]
+        out.iat[r, 2 + n] = row_subtotals[i]
+        for j, ec in enumerate(extra_codes):
+            out.iat[r, 2 + n + 1 + j] = _to_float_or_zero(raw.iat[row_pos[code], col_pos[ec]])
+        out.iat[r, 2 + n + 1 + k] = fd[i]
+        out.iat[r, 2 + n + 1 + k + 1] = t016[i]
 
     sub_r = 6 + n
-    out.iat[sub_r, 1] = '중간투입계'
+    out.iat[sub_r, 1] = "중간투입계"
     for j in range(n):
         out.iat[sub_r, 2 + j] = col_subtotals[j]
 
     va_r = 6 + n + 1
-    out.iat[va_r, 1] = '부가가치계'
+    out.iat[va_r, 1] = "부가가치계"
     for j in range(n):
-        out.iat[va_r, 2 + j] = va_per_col[j]
+        out.iat[va_r, 2 + j] = va[j]
 
     tot_r = 6 + n + 2
-    out.iat[tot_r, 1] = '총투입계'
+    out.iat[tot_r, 1] = "총투입계"
     for j in range(n):
-        out.iat[tot_r, 2 + j] = total_out[j]
+        out.iat[tot_r, 2 + j] = total_supply[j]
 
     return out
 
 
-def _resolve_import_source(mode: str, year: int) -> Tuple[Path, str] | Tuple[None, None]:
-    """Return (path, sheet_name) for BEA Import Matrix data for a given year.
-    Tries _US_CONFIG[mode]['import_files'] in order. Multi-year workbooks have
-    a year-named sheet; the single-year fallback file uses sheet 'Table'."""
-    cfg = _US_CONFIG.get(mode)
-    if cfg is None:
-        return None, None
-    repo = Path(__file__).resolve().parent
-    for fn_template in cfg["import_files"]:
-        fn = fn_template.format(year=year)
-        path = repo / fn
-        if not path.exists():
-            continue
-        try:
-            sheet_names = pd.ExcelFile(path).sheet_names
-        except Exception:
-            continue
-        if str(year) in sheet_names:
-            return path, str(year)
-        if "Table" in sheet_names:
-            return path, "Table"
-    return None, None
-
-
 def available_us_years(mode: str) -> List[int]:
-    """Years for which both Use (uploaded) and Import (in repo) data exist."""
+    """저장소 루트의 Supply square 워크북에 들어 있는 연도 시트 목록."""
     cfg = _US_CONFIG.get(mode)
     if cfg is None:
         return []
-    repo = Path(__file__).resolve().parent
-    use_p = repo / cfg["use_filename"]
+    use_p = Path(__file__).resolve().parent / cfg["use_filename"]
     if not use_p.exists():
         return []
     try:
-        use_years = {int(s) for s in pd.ExcelFile(use_p).sheet_names if s.isdigit()}
+        return sorted(int(s) for s in pd.ExcelFile(use_p).sheet_names if s.isdigit())
     except Exception:
         return []
-    return sorted(y for y in use_years if _resolve_import_source(mode, y)[0] is not None)
 
 
 def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> LoadResult:
-    """US loader. Reads the Total Use sheet for `year` from the uploaded BEA
-    workbook, locates a matching BEA Import Matrix in the repo, restricts both
-    to the shared industry × industry block, and repacks them into the Korean
-    BoK layout."""
+    """US Supply loader. 업로드(또는 저장소 자동 로드)된 Supply square 워크북에서
+    `year` 시트를 읽어 한국은행 레이아웃으로 재구성한다. 공급표에는 수입표
+    (sheet 1) 대응물이 없으므로 df_local 은 같은 표의 복사본을 쓴다."""
     cfg = _US_CONFIG.get(mode)
     if cfg is None:
         raise NotImplementedError(f"US mode {mode!r} not configured.")
@@ -473,58 +373,14 @@ def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> Load
         raise ValueError(
             f"업로드한 파일에 '{expected_sheet}' 시트가 없습니다. "
             f"발견된 시트: {sample}.\n"
-            f"`{mode}` 모드에서는 저장소 루트의 `{expected_use_filename}` 파일을 "
-            f"업로드해야 합니다 (BEA Use Table 연도별 워크북). "
-            f"Import 파일은 코드가 자동으로 읽습니다."
+            f"`{mode}` 모드에서는 `{expected_use_filename}` 파일을 업로드해야 합니다 "
+            f"(BEA Domestic Supply 연도별 정방 워크북)."
         )
 
-    import_path, import_sheet = _resolve_import_source(mode, year)
-    if import_path is None:
-        candidates = ", ".join(cfg["import_files"]).format(year=year)
-        raise FileNotFoundError(
-            f"BEA Import Matrix 파일을 찾을 수 없습니다 (연도={year}). "
-            f"다음 중 하나를 저장소 루트에 두세요: {candidates}"
-        )
-
-    # Both files get normalized to canonical first_idx=(3, 2) layout — DETAIL
-    # files have names ABOVE codes which the rest of the pipeline can't read.
-    use_raw = pd.read_excel(uploaded_file, sheet_name=expected_sheet, header=None, dtype=object)
-    imp_raw = pd.read_excel(str(import_path), sheet_name=import_sheet, header=None, dtype=object)
-    use_df = _normalize_bea_xlsx(use_raw, cfg["use_layout"])
-    imp_df = _normalize_bea_xlsx(imp_raw, cfg["import_layout"])
-
-    industry_codes = _square_industry_codes(use_df, imp_df)
-    if len(industry_codes) < 2:
-        raise ValueError(
-            f"BEA Use[{year}] and Import[{year}] only share {len(industry_codes)} "
-            f"industry code(s) — alignment failed. Check that the uploaded file is "
-            f"`{expected_use_filename}` and that {import_path.name} contains data for {year}."
-        )
-
-    # Industry total output row in Use (T018 SUMMARY / T008 DETAIL) — reused as
-    # the denominator for the Import workbook so BoK Aᵐ shares the same x̂.
-    use_row_codes = [str(c) for c in use_df.iloc[3:, 0].tolist()]
-    use_col_codes = [str(c) for c in use_df.iloc[1, 2:].tolist()]
-    industry_output: Dict[str, float] = {}
-    out_code = next((c for c in _TOTAL_OUTPUT_ROW_CANDIDATES if c in use_row_codes), None)
-    if out_code is not None:
-        out_row = 3 + use_row_codes.index(out_code)
-        for j, cc in enumerate(use_col_codes):
-            if cc in industry_codes:
-                industry_output[cc] = _to_float_or_zero(use_df.iat[out_row, 2 + j])
-
-    use_canonical = _build_bok_layout(
-        use_df, industry_codes,
-        title=f'BEA Use Table — {level} {year}', year=year, has_va=True,
-        total_out_override=industry_output,
-    )
-    imp_canonical = _build_bok_layout(
-        imp_df, industry_codes,
-        title=f'BEA Import Matrix — {level} {year}', year=year, has_va=False,
-        total_out_override=industry_output,
-    )
-
-    return _post_clean(use_canonical, imp_canonical, params)
+    raw = xl.parse(sheet_name=expected_sheet, header=None, dtype=object)
+    supply_canonical = _build_bok_layout_supply(raw, level=level, year=year)
+    supply_local = supply_canonical.copy(deep=True)
+    return _post_clean(supply_canonical, supply_local, params)
 
 
 def load_workbook(uploaded_file, mode: str, *, us_year: int | None = None) -> LoadResult:
