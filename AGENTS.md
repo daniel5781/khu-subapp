@@ -35,6 +35,8 @@ The radio at the top of `main()` selects how the uploaded Excel is parsed:
 | Japan (2000~2020) | (6, 2) | False | |
 | Korea (1990~2005) | (5, 2) | True | drops last row of `df` |
 | Manual | 0 | False | |
+| US(Summary 2000~2024) | (6, 2) | False | `미국_사용표_총거래/국산_한국레이아웃_2000_2024.xlsx`, n=71, year sheets 2000~2020 + 2023~2024; 총거래표 → `df`, 국산거래표 → `df_local`; Used→부가가치계, Other→기타투입 행; see CLAUDE.md |
+| US(Sector 2000~2024) | (6, 2) | False | `..._대분류_2000_2024.xlsx`, n=15 (Summary를 15부문 집계); 그 외 위와 동일 |
 
 `first_idx` = `(row, col)` where the numeric block starts. The two rows/cols immediately before it are labels (`number_of_label = 2`: code + name). `mid_ID_idx`, computed by `get_mid_ID_idx`, is the boundary between intermediate transactions and final-demand / value-added regions. Together they partition the table into four labeled sub-matrices: **X** (top-left intermediate), **R** (bottom-left value-added), **C** (top-right final demand), and the bottom-right is unused.
 

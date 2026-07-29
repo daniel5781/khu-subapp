@@ -13,13 +13,14 @@ Upload contract for non-US modes: sheet 0 = Total Transactions Table
 the BoK layout where labels are at the first `number_of_label` rows/cols and
 the numeric block starts at `first_idx`.
 
-US modes use BEA "Domestic Supply of Commodities by Industries" square
-workbooks (`Supply_Sector_square.xlsx` / `Supply_Summary_square.xlsx`), one
-year per sheet (1997~2024). Rows(상품)와 열(산업)이 같은 코드 집합을 갖도록
-미리 정방으로 정리된 파일이며, `_build_bok_layout_supply` 가 이를 한국은행
-레이아웃(first_idx=(6,2))으로 재구성해 이후 파이프라인이 한국 모드와 동일하게
-동작한다. 공급표에는 수입표(sheet 1) 대응물이 없으므로 df_local 은 df 의
-복사본을 쓴다.
+The US mode uses two BEA Use-table workbooks already arranged in the Korean
+BoK layout (one year per sheet; 2000~2020, 2023, 2024; Summary level n=71):
+`미국_사용표_총거래_한국레이아웃_2000_2024.xlsx` (총거래표, df) and
+`미국_사용표_국산_한국레이아웃_2000_2024.xlsx` (국산거래표 = Use − 수입행렬,
+df_local). `_build_bok_layout_use` 가 각 연도 시트를 캐노니컬 레이아웃
+(first_idx=(6,2))으로 재구성해 이후 파이프라인이 한국 모드와 동일하게
+동작한다. 마지막 행 = 총투입계(T018, A행렬 분모), 그 위가 부가가치계.
+빌더 스크립트: 저장소 밖 `build_use_korean_layout.py`.
 """
 from __future__ import annotations
 
@@ -56,8 +57,8 @@ MODES: List[str] = [
     "Japan(2000~2020)",
     "Korea(1990~2005)",
     "Manual",
-    "US(Supply Sector)",
-    "US(Supply Summary)",
+    "US(Summary 2000~2024)",
+    "US(Sector 2000~2024)",
 ]
 
 _PARAMS = {
@@ -65,32 +66,35 @@ _PARAMS = {
     "Japan(2000~2020)": ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
     "Korea(1990~2005)": ModeParams(first_idx=(5, 2), subplus_edit=True,  number_of_label=2),
     "Manual":           ModeParams(first_idx=0,      subplus_edit=False, number_of_label=2),
-    "US(Supply Sector)":  ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
-    "US(Supply Summary)": ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
+    "US(Summary 2000~2024)": ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
+    "US(Sector 2000~2024)":  ModeParams(first_idx=(6, 2), subplus_edit=False, number_of_label=2),
 }
 
 
-# US-only config — BEA Domestic Supply square workbooks (연도별 시트 1997~2024).
+# US-only config — BEA Use 기반 한국레이아웃 워크북 (연도별 시트).
+# 총거래표 → df, 국산거래표(Use − 수입행렬) → df_local.
 _US_CONFIG: Dict[str, Dict[str, Any]] = {
-    "US(Supply Sector)": {
-        "level": "Sector",       # 15개 대분류 산업
-        "use_filename": "Supply_Sector_square.xlsx",
-    },
-    "US(Supply Summary)": {
+    "US(Summary 2000~2024)": {
         "level": "Summary",      # 71개 중분류 산업
-        "use_filename": "Supply_Summary_square.xlsx",
+        "total_filename": "미국_사용표_총거래_한국레이아웃_2000_2024.xlsx",
+        "local_filename": "미국_사용표_국산_한국레이아웃_2000_2024.xlsx",
+    },
+    "US(Sector 2000~2024)": {
+        "level": "Sector",       # 15개 대분류 산업
+        "total_filename": "미국_사용표_총거래_한국레이아웃_대분류_2000_2024.xlsx",
+        "local_filename": "미국_사용표_국산_한국레이아웃_대분류_2000_2024.xlsx",
     },
 }
 
-# Supply_*_square.xlsx 내부 고정 레이아웃 (0-index).
-#   row 5 = 열 코드(col 2..), row 6 = ['IOCode','Name', 열 이름...],
-#   row 7.. = 상품(commodity) 행 (col 0=코드, col 1=이름),
-#   마지막 행 = 'Total industry supply' (col 0 은 빈칸).
-_SUPPLY_CODES_ROW = 5
-_SUPPLY_NAMES_ROW = 6
-_SUPPLY_DATA_START = 7
-# 산업 블록 오른쪽의 부속(공급 구성) 열 중 총공급(구매자가격) 열 코드.
-_SUPPLY_TOTAL_COL = "T016"
+# 미국_사용표_*_한국레이아웃 워크북 내부 고정 레이아웃 (0-index).
+#   row 0 = ['IOCode', (빈칸), 산업코드..., 중간수요계, F코드..., 최종수요계, 총수요]
+#   row 1 = ['Name',   (빈칸), 산업이름..., ...]
+#   row 2.. = 상품(commodity) 행 (col 0=코드, col 1=이름)
+#   상품 블록 뒤: 중간투입계(국산은 국산중간투입계/수입중간투입계) → 부가가치계
+#   → 총산출(T018) 행. 그 아래 "(참고)" 부가가치 세부 블록은 무시한다.
+_USE_CODES_ROW = 0
+_USE_NAMES_ROW = 1
+_USE_DATA_START = 2
 
 
 def get_mode_params(mode: str) -> ModeParams:
@@ -103,12 +107,22 @@ def get_us_config(mode: str) -> Dict[str, Any]:
 
 
 def us_use_file_path(mode: str) -> Path | None:
-    """Repo path to the BEA Use workbook for a US mode, or None. The file ships
-    in the repo, so app.py can auto-load it when the user hasn't uploaded one."""
+    """Repo path to the US 총거래표 workbook, or None. The file ships in the
+    repo, so app.py can auto-load it when the user hasn't uploaded one.
+    (업로드가 있으면 업로드본이 총거래표를 대체하고, 국산거래표는 항상
+    `us_local_file_path` 의 저장소 파일을 쓴다.)"""
     cfg = _US_CONFIG.get(mode)
     if cfg is None:
         return None
-    return Path(__file__).resolve().parent / cfg["use_filename"]
+    return Path(__file__).resolve().parent / cfg["total_filename"]
+
+
+def us_local_file_path(mode: str) -> Path | None:
+    """Repo path to the US 국산거래표 workbook, or None."""
+    cfg = _US_CONFIG.get(mode)
+    if cfg is None:
+        return None
+    return Path(__file__).resolve().parent / cfg["local_filename"]
 
 
 def _find_string_values(df: pd.DataFrame, first_idx) -> List[Tuple[Any, Any, str]]:
@@ -176,36 +190,37 @@ def _load_two_sheet(uploaded_file, params: ModeParams) -> LoadResult:
 
 
 # ---------------------------------------------------------------------------
-# US (BEA Domestic Supply) loader — 상품 × 산업 정방 공급표
+# US (BEA Use) loader — 한국레이아웃 워크북 2종 (총거래표 / 국산거래표)
 # ---------------------------------------------------------------------------
 #
-# Supply_*_square.xlsx 는 BEA "Domestic Supply of Commodities by Industries"
-# 표에서 행(상품)과 열(산업)이 같은 코드 집합이 되도록 비교불능 행(Used/Other)
-# 을 제거한 정방 파일이다. 이를 한국은행 레이아웃(first_idx=(6,2))으로 재구성해
+# 두 워크북은 BEA SUT Use표(기초가격, Summary 71개 산업)를 이미 한국은행
+# 형식으로 정렬한 것이다 (총거래 = Use 그대로, 국산 = Use − 수입행렬).
+# `_build_bok_layout_use` 가 연도 시트 하나를 캐노니컬 레이아웃으로 재구성해
 # 이후 파이프라인(편집 → Leontief → 네트워크)이 한국 모드와 동일하게 돌아간다.
 #
-# Synthesized layout per sheet (n = 산업 수, k = 부속 공급구성 열 수):
+# Synthesized layout per sheet (n = 산업 수 71, k = 최종수요 F열 수 19):
 #
-#                col 0   col 1     cols 2..2+n-1   col 2+n    cols 2+n+1..2+n+k  col 2+n+k+1   col 2+n+k+2
-#   row 0        title   ─        ─              ─          ─                 ─             ─
-#   row 1        year    ─        ─              ─          ─                 ─             ─
-#   row 2        note    ─        ─              ─          ─                 ─             ─
-#   row 3        units   ─        ─              ─          ─                 ─             ─
-#   row 4        ─       ─        industry codes  SUBTOTAL   T007..T016 코드    FINAL_DEMAND  TOTAL
-#   row 5        ─       ─        industry names  중간수요계  (파일 원본 이름)    최종수요계     총산출
-#   row 6..6+n-1 code    name     X_ij            Σ X row    파일 원본 값        T016-Σ X row  T016
-#   row 6+n      ─       중간투입계  Σ X col        ─          ─                 ─             ─
-#   row 6+n+1    ─       부가가치계  총공급-Σ X col  ─          ─                 ─             ─
-#   row 6+n+2    ─       총투입계   총공급(파일 값)  ─          ─                 ─             ─
+#                col 0   col 1       cols 2..2+n-1   col 2+n    cols 2+n+1..2+n+k  col 2+n+k+1   col 2+n+k+2
+#   row 0        title   ─          ─              ─          ─                 ─             ─
+#   row 1        year    ─          ─              ─          ─                 ─             ─
+#   row 2        note    ─          ─              ─          ─                 ─             ─
+#   row 3        units   ─          ─              ─          ─                 ─             ─
+#   row 4        ─       ─          industry codes  SUBTOTAL   F010..F10N 코드    FINAL_DEMAND  TOTAL
+#   row 5        ─       ─          industry names  중간수요계  (파일 원본 이름)    최종수요계     총수요
+#   row 6..6+n-1 code    name       X_ij            Σ X row    파일 원본 값        Σ F row       Σ X + Σ F
+#   row 6+n      ─       중간투입계    Σ X col        ─          ─                 ─             ─
+#  (row 6+n+1    ─       수입중간투입계 파일 값 — 국산거래표에만 있음)
+#  (그 다음 행    ─       기타투입(Other) 파일 값 — 비교불능수입 등, 부가가치 아님)
+#   끝-2         ─       부가가치계    T018 − 위 행들 (= VABAS + Used)
+#   끝-1         ─       총투입계     T018(파일 값)   ─          ─                 ─             ─
 #
 # `get_mid_ID_idx` walks the first data row, stopping at the SUBTOTAL cell,
-# which lands `mid_ID_idx` at (6+n, 2+n). SUBTOTAL/중간투입계 는 파일의
-# T007/Total 행을 그대로 쓰지 않고 X 블록에서 다시 계산한다 — 파일 값은 ±1
-# 반올림 차이가 있어 경계 탐지(±0.001 허용)가 어긋날 수 있기 때문.
+# which lands `mid_ID_idx` at (6+n, 2+n). SUBTOTAL/중간투입계 는 X 블록에서
+# 다시 계산한다 (경계 탐지 ±0.001 허용 안에 확실히 들어가도록).
 #
-# ⚠️ 공급표 특성상 열합계(Σ X col) ≈ 총공급이라 부가가치계 ≈ 0 이고 투입계수
-# 행렬의 열합이 1에 매우 가깝다. (I-A)⁻¹ 는 수치적으로 매우 불안정하므로 이
-# 모드의 의미 있는 산출물은 네트워크 추출·중심성 분석 쪽이다.
+# app.py 의 분모 규약: 마지막 행 = 총투입계(T018) → A 행렬 분모,
+# 마지막에서 두 번째 행 = 부가가치계 → v 벡터. 두 워크북 모두 T018 이
+# 분모이므로 국산 레온티에프 = (I − X_국산/T018)⁻¹ 가 된다 (표준 국산투입계수).
 
 def _to_float_or_zero(x) -> float:
     if x is None:
@@ -221,88 +236,116 @@ def _to_float_or_zero(x) -> float:
         return 0.0
 
 
-def _build_bok_layout_supply(raw: pd.DataFrame, *, level: str, year: int) -> pd.DataFrame:
-    """BEA Domestic Supply square 시트 하나를 한국은행 레이아웃으로 재구성한다.
+def _build_bok_layout_use(raw: pd.DataFrame, *, kind: str, year: int) -> pd.DataFrame:
+    """미국_사용표_*_한국레이아웃 워크북의 연도 시트 하나를 캐노니컬 레이아웃으로
+    재구성한다. kind: 'total'(총거래표) 또는 'local'(국산거래표).
     See module-level diagram for the output shape."""
-    if str(raw.iat[_SUPPLY_NAMES_ROW, 0]).strip() != "IOCode":
+    if str(raw.iat[_USE_CODES_ROW, 0]).strip() != "IOCode":
         raise ValueError(
-            f"Supply square 파일 형식이 아닙니다 (셀 [{_SUPPLY_NAMES_ROW}, 0] 이 'IOCode' 가 아님). "
-            f"`Supply_Sector_square.xlsx` 또는 `Supply_Summary_square.xlsx` 를 업로드하세요."
+            f"미국 사용표 한국레이아웃 파일 형식이 아닙니다 (셀 [{_USE_CODES_ROW}, 0] 이 "
+            f"'IOCode' 가 아님). `미국_사용표_총거래_한국레이아웃_2000_2024.xlsx` "
+            f"형식의 파일을 업로드하세요."
         )
 
-    col_codes = [str(c).strip() for c in raw.iloc[_SUPPLY_CODES_ROW, 2:].tolist()]
-    col_names = [str(c) for c in raw.iloc[_SUPPLY_NAMES_ROW, 2:].tolist()]
+    local = kind == "local"
+    mid_col_label = "국산중간수요계" if local else "중간수요계"
+    fin_col_label = "국산최종수요계" if local else "최종수요계"
+    tot_col_label = "국산총수요" if local else "총수요"
+    mid_row_label = "국산중간투입계" if local else "중간투입계"
+
+    col_codes = [str(c).strip() for c in raw.iloc[_USE_CODES_ROW, 2:].tolist()]
+    col_names = [str(c) for c in raw.iloc[_USE_NAMES_ROW, 2:].tolist()]
     col_pos = {c: 2 + j for j, c in enumerate(col_codes)}
     name_for = {c: col_names[j] for j, c in enumerate(col_codes)}
-    if _SUPPLY_TOTAL_COL not in col_pos:
-        raise ValueError(f"총공급 열 `{_SUPPLY_TOTAL_COL}` 을 찾지 못했습니다 — Supply square 파일이 맞는지 확인하세요.")
+    for required in (mid_col_label, fin_col_label, tot_col_label):
+        if required not in col_pos:
+            raise ValueError(
+                f"`{required}` 열을 찾지 못했습니다 — "
+                f"{'국산거래표' if local else '총거래표'} 한국레이아웃 파일이 맞는지 확인하세요."
+            )
 
-    # 상품(행) 블록: col 0 에 코드가 있는 행들. 마지막 'Total industry supply'
-    # 행은 이름으로 식별해 제외한다 (Sector 파일은 코드 없음, Summary 는 'T017').
+    n = col_codes.index(mid_col_label)
+    industry_codes = col_codes[:n]
+    f_codes = col_codes[n + 1: col_codes.index(fin_col_label)]
+    k = len(f_codes)
+
+    # 행 스캔: 상품 블록 → 총계 행들(라벨은 col 0). "(참고)" 블록은 무시.
     row_pos: Dict[str, int] = {}
-    total_supply_row_idx = None
-    for r in range(_SUPPLY_DATA_START, raw.shape[0]):
-        if "total industry supply" in str(raw.iat[r, 1]).lower():
-            total_supply_row_idx = r
-            continue
+    total_rows: Dict[str, int] = {}
+    for r in range(_USE_DATA_START, raw.shape[0]):
         code = raw.iat[r, 0]
         if code is None or (isinstance(code, float) and np.isnan(code)):
             continue
-        row_pos[str(code).strip()] = r
-    if total_supply_row_idx is None:
-        raise ValueError("'Total industry supply' 행을 찾지 못했습니다 — Supply square 파일이 맞는지 확인하세요.")
+        code = str(code).strip()
+        if code.startswith("(참고)"):
+            break
+        if (code in (mid_row_label, "수입중간투입계", "부가가치계")
+                or code.startswith(("총산출", "기타투입"))):
+            total_rows[code.split("(")[0]] = r
+        else:
+            row_pos[code] = r
 
-    industry_codes = [c for c in col_codes if c in row_pos]
-    n = len(industry_codes)
-    if n < 2:
-        raise ValueError(
-            f"행(상품)과 열(산업)이 공유하는 코드가 {n}개뿐입니다 — 정방 정렬에 실패했습니다."
-        )
+    if [c for c in industry_codes if c in row_pos] != industry_codes or len(row_pos) != n:
+        raise ValueError("행(상품)과 열(산업) 코드가 일치하지 않습니다 — 한국레이아웃 파일이 맞는지 확인하세요.")
+    if "총산출" not in total_rows or "부가가치계" not in total_rows:
+        raise ValueError("총산출(T018)/부가가치계 행을 찾지 못했습니다 — 한국레이아웃 파일이 맞는지 확인하세요.")
+    if local and "수입중간투입계" not in total_rows:
+        raise ValueError("수입중간투입계 행을 찾지 못했습니다 — 국산거래표 파일이 맞는지 확인하세요.")
 
     X = np.zeros((n, n), dtype=float)
     for i, ri in enumerate(industry_codes):
         for j, ci in enumerate(industry_codes):
             X[i, j] = _to_float_or_zero(raw.iat[row_pos[ri], col_pos[ci]])
 
-    # 부속(공급 구성) 열: 산업이 아닌 열 전부 (T007, MCIF, ..., T016) —
-    # 파일 원본 값·이름 그대로 C 블록에 보존한다.
-    extra_codes = [c for c in col_codes if c not in row_pos and c and c.lower() != "nan"]
-    k = len(extra_codes)
+    F = np.zeros((n, k), dtype=float)
+    for i, ri in enumerate(industry_codes):
+        for j, fc in enumerate(f_codes):
+            F[i, j] = _to_float_or_zero(raw.iat[row_pos[ri], col_pos[fc]])
 
-    t016 = np.array([
-        _to_float_or_zero(raw.iat[row_pos[c], col_pos[_SUPPLY_TOTAL_COL]]) for c in industry_codes
+    t018 = np.array([
+        _to_float_or_zero(raw.iat[total_rows["총산출"], col_pos[c]]) for c in industry_codes
     ])
-    total_supply = np.array([
-        _to_float_or_zero(raw.iat[total_supply_row_idx, col_pos[c]]) for c in industry_codes
-    ])
+    imp = None
+    if local:
+        imp = np.array([
+            _to_float_or_zero(raw.iat[total_rows["수입중간투입계"], col_pos[c]]) for c in industry_codes
+        ])
+    # 기타투입(Other, 비교불능수입 등) — 부가가치계에 넣지 않고 별도 행으로 보존.
+    # (구형 파일에는 이 행이 없을 수 있으므로 없으면 0 취급 — 그 경우 부가가치계가 흡수)
+    has_other = "기타투입" in total_rows
+    other = (np.array([
+        _to_float_or_zero(raw.iat[total_rows["기타투입"], col_pos[c]]) for c in industry_codes
+    ]) if has_other else np.zeros(n))
 
+    # 경계 탐지(±0.001)가 확실히 통과하도록 파생 합계는 X/F 에서 재계산.
     row_subtotals = X.sum(axis=1)
     col_subtotals = X.sum(axis=0)
-    fd = t016 - row_subtotals          # 총공급(구매자가격) − 산업공급계
-    va = total_supply - col_subtotals  # ≈ 0 (반올림 잔차) — 공급표엔 부가가치 행이 없음
+    fd = F.sum(axis=1)
+    va = t018 - col_subtotals - other - (imp if local else 0)
 
     # Compose canonical layout.
-    n_rows = 6 + n + 3
+    n_rows = 6 + n + (4 if local else 3) + (1 if has_other else 0)
     n_cols = 2 + n + 1 + k + 2
     out = pd.DataFrame(np.nan, index=range(n_rows), columns=range(n_cols), dtype=object)
 
-    out.iat[0, 0] = f"BEA Domestic Supply — {level} {year}"
+    out.iat[0, 0] = f"BEA Use — {'국산거래표' if local else '총거래표'} Summary {year}"
     out.iat[1, 0] = str(year)
-    out.iat[2, 0] = "Domestic supply of commodities by industries (square)"
+    out.iat[2, 0] = ("Use of commodities by industries, domestic (Use − import matrix)"
+                     if local else "Use of commodities by industries (total, basic prices)")
     out.iat[3, 0] = "Unit: Millions of USD"
 
     for j, code in enumerate(industry_codes):
         out.iat[4, 2 + j] = code
         out.iat[5, 2 + j] = name_for.get(code, code)
     out.iat[4, 2 + n] = "SUBTOTAL"
-    out.iat[5, 2 + n] = "중간수요계"
-    for j, code in enumerate(extra_codes):
+    out.iat[5, 2 + n] = mid_col_label
+    for j, code in enumerate(f_codes):
         out.iat[4, 2 + n + 1 + j] = code
         out.iat[5, 2 + n + 1 + j] = name_for.get(code, code)
     out.iat[4, 2 + n + 1 + k] = "FINAL_DEMAND"
-    out.iat[5, 2 + n + 1 + k] = "최종수요계"
+    out.iat[5, 2 + n + 1 + k] = fin_col_label
     out.iat[4, 2 + n + 1 + k + 1] = "TOTAL"
-    out.iat[5, 2 + n + 1 + k + 1] = "총산출"
+    out.iat[5, 2 + n + 1 + k + 1] = tot_col_label
 
     for i, code in enumerate(industry_codes):
         r = 6 + i
@@ -311,76 +354,96 @@ def _build_bok_layout_supply(raw: pd.DataFrame, *, level: str, year: int) -> pd.
         for j in range(n):
             out.iat[r, 2 + j] = X[i, j]
         out.iat[r, 2 + n] = row_subtotals[i]
-        for j, ec in enumerate(extra_codes):
-            out.iat[r, 2 + n + 1 + j] = _to_float_or_zero(raw.iat[row_pos[code], col_pos[ec]])
+        for j in range(k):
+            out.iat[r, 2 + n + 1 + j] = F[i, j]
         out.iat[r, 2 + n + 1 + k] = fd[i]
-        out.iat[r, 2 + n + 1 + k + 1] = t016[i]
+        out.iat[r, 2 + n + 1 + k + 1] = row_subtotals[i] + fd[i]
 
-    sub_r = 6 + n
-    out.iat[sub_r, 1] = "중간투입계"
+    r = 6 + n
+    out.iat[r, 1] = mid_row_label
     for j in range(n):
-        out.iat[sub_r, 2 + j] = col_subtotals[j]
-
-    va_r = 6 + n + 1
-    out.iat[va_r, 1] = "부가가치계"
+        out.iat[r, 2 + j] = col_subtotals[j]
+    if local:
+        r += 1
+        out.iat[r, 1] = "수입중간투입계"
+        for j in range(n):
+            out.iat[r, 2 + j] = imp[j]
+    if has_other:
+        r += 1
+        out.iat[r, 1] = "기타투입(Other)"
+        for j in range(n):
+            out.iat[r, 2 + j] = other[j]
+    r += 1
+    out.iat[r, 1] = "부가가치계"
     for j in range(n):
-        out.iat[va_r, 2 + j] = va[j]
-
-    tot_r = 6 + n + 2
-    out.iat[tot_r, 1] = "총투입계"
+        out.iat[r, 2 + j] = va[j]
+    r += 1
+    out.iat[r, 1] = "총투입계"
     for j in range(n):
-        out.iat[tot_r, 2 + j] = total_supply[j]
+        out.iat[r, 2 + j] = t018[j]
 
     return out
 
 
 def available_us_years(mode: str) -> List[int]:
-    """저장소 루트의 Supply square 워크북에 들어 있는 연도 시트 목록."""
+    """저장소 루트의 총거래/국산 워크북이 공통으로 가진 연도 시트 목록."""
     cfg = _US_CONFIG.get(mode)
     if cfg is None:
         return []
-    use_p = Path(__file__).resolve().parent / cfg["use_filename"]
-    if not use_p.exists():
-        return []
-    try:
-        return sorted(int(s) for s in pd.ExcelFile(use_p).sheet_names if s.isdigit())
-    except Exception:
-        return []
+    years = None
+    for key in ("total_filename", "local_filename"):
+        p = Path(__file__).resolve().parent / cfg[key]
+        if not p.exists():
+            return []
+        try:
+            s = {int(x) for x in pd.ExcelFile(p).sheet_names if x.isdigit()}
+        except Exception:
+            return []
+        years = s if years is None else (years & s)
+    return sorted(years or [])
 
 
-def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> LoadResult:
-    """US Supply loader. 업로드(또는 저장소 자동 로드)된 Supply square 워크북에서
-    `year` 시트를 읽어 한국은행 레이아웃으로 재구성한다. 공급표에는 수입표
-    (sheet 1) 대응물이 없으므로 df_local 은 같은 표의 복사본을 쓴다."""
-    cfg = _US_CONFIG.get(mode)
-    if cfg is None:
-        raise NotImplementedError(f"US mode {mode!r} not configured.")
-    level = cfg["level"]
-    expected_use_filename = cfg["use_filename"]
-
+def _read_us_year_sheet(source, year: int, expected_filename: str, table_kor: str) -> pd.DataFrame:
     expected_sheet = str(year)
     try:
-        xl = pd.ExcelFile(uploaded_file)
+        xl = pd.ExcelFile(source)
     except Exception as e:
         raise ValueError(
-            f"업로드한 파일을 열 수 없습니다: {e}. "
-            f"`{mode}` 모드에서는 `{expected_use_filename}` 을 업로드하세요."
+            f"{table_kor} 파일을 열 수 없습니다: {e}. "
+            f"`{expected_filename}` 형식의 파일이어야 합니다."
         )
     if expected_sheet not in xl.sheet_names:
         sample = ", ".join(xl.sheet_names[:8])
         if len(xl.sheet_names) > 8:
             sample += f", ... (총 {len(xl.sheet_names)}개 시트)"
         raise ValueError(
-            f"업로드한 파일에 '{expected_sheet}' 시트가 없습니다. "
+            f"{table_kor} 파일에 '{expected_sheet}' 시트가 없습니다. "
             f"발견된 시트: {sample}.\n"
-            f"`{mode}` 모드에서는 `{expected_use_filename}` 파일을 업로드해야 합니다 "
-            f"(BEA Domestic Supply 연도별 정방 워크북)."
+            f"`{expected_filename}` (연도별 시트 워크북) 형식이어야 합니다."
+        )
+    return xl.parse(sheet_name=expected_sheet, header=None, dtype=object)
+
+
+def _load_us(uploaded_file, mode: str, params: ModeParams, *, year: int) -> LoadResult:
+    """US Use loader. 총거래표(업로드본이 있으면 그것, 없으면 저장소 파일)와
+    국산거래표(항상 저장소 파일)에서 `year` 시트를 읽어 캐노니컬 레이아웃으로
+    재구성한다. df = 총거래표, df_local = 국산거래표."""
+    cfg = _US_CONFIG.get(mode)
+    if cfg is None:
+        raise NotImplementedError(f"US mode {mode!r} not configured.")
+
+    local_p = us_local_file_path(mode)
+    if local_p is None or not local_p.exists():
+        raise ValueError(
+            f"국산거래표 `{cfg['local_filename']}` 를 저장소 루트에서 찾지 못했습니다."
         )
 
-    raw = xl.parse(sheet_name=expected_sheet, header=None, dtype=object)
-    supply_canonical = _build_bok_layout_supply(raw, level=level, year=year)
-    supply_local = supply_canonical.copy(deep=True)
-    return _post_clean(supply_canonical, supply_local, params)
+    raw_total = _read_us_year_sheet(uploaded_file, year, cfg["total_filename"], "총거래표")
+    raw_local = _read_us_year_sheet(str(local_p), year, cfg["local_filename"], "국산거래표")
+
+    df = _build_bok_layout_use(raw_total, kind="total", year=year)
+    df_local = _build_bok_layout_use(raw_local, kind="local", year=year)
+    return _post_clean(df, df_local, params)
 
 
 def load_workbook(uploaded_file, mode: str, *, us_year: int | None = None) -> LoadResult:

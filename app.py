@@ -151,16 +151,17 @@ def main():
     subplus_edit = params.subplus_edit
     number_of_label = params.number_of_label
 
-    # US 모드는 연도 선택을 따로 받음 — Supply square 워크북의 연도 시트 목록 노출.
+    # US 모드는 연도 선택을 따로 받음 — 총거래/국산 워크북의 공통 연도 시트 목록 노출.
     us_year = None
     if mode.startswith("US"):
         avail_years = preprocessing.available_us_years(mode)
         cfg = preprocessing.get_us_config(mode)
-        use_filename = cfg["use_filename"]
+        total_filename = cfg["total_filename"]
+        local_filename = cfg["local_filename"]
         if not avail_years:
             st.error(
                 f"`{mode}` 모드 데이터를 찾지 못했습니다. 저장소 루트에 "
-                f"`{use_filename}` 파일이 있어야 합니다."
+                f"`{total_filename}` 와 `{local_filename}` 파일이 있어야 합니다."
             )
         else:
             us_year = st.selectbox(
@@ -169,10 +170,12 @@ def main():
                 index=len(avail_years) - 1,
             )
             level = cfg.get("level", "Summary")
+            n_ind = 15 if level == "Sector" else 71
             st.caption(
-                f"📂 업로드 파일: `{use_filename}` (BEA Domestic Supply {level}, "
-                f"{avail_years[0]}~{avail_years[-1]}). 상품×산업 정방 공급표를 "
-                f"한국은행 레이아웃으로 변환해 한국 모드와 동일한 파이프라인으로 분석합니다."
+                f"📂 총거래표: `{total_filename}`, 국산거래표: `{local_filename}` "
+                f"(BEA Use {level} 기초가격 {n_ind}부문, 국산 = Use − 수입행렬). "
+                f"Used→부가가치계 편입, Other→기타투입 행으로 분리(교수님 지침). "
+                f"한국 모드와 동일한 파이프라인, 분모는 총산출(T018)."
             )
 
     if 'number_of_divide' not in st.session_state:
@@ -193,8 +196,8 @@ def main():
     # 파일 업로드 섹션
     st.session_state['uploaded_file'] = st.file_uploader("여기에 파일을 드래그하거나 클릭하여 업로드하세요.", type=['xls', 'xlsx'])
 
-    # US 모드는 Use 파일이 저장소에 이미 있으므로, 업로드가 없으면 자동으로 그 파일을 사용.
-    # (직접 다른 워크북을 올리면 업로드본이 우선)
+    # US 모드는 두 워크북이 저장소에 이미 있으므로, 업로드가 없으면 자동으로 사용.
+    # (직접 워크북을 올리면 총거래표만 업로드본으로 대체되고 국산거래표는 저장소 파일 유지)
     load_source = st.session_state['uploaded_file']
     source_name = getattr(load_source, 'name', None)
     if load_source is None and mode.startswith("US") and us_year is not None:
@@ -202,7 +205,7 @@ def main():
         if repo_use is not None and repo_use.exists():
             load_source = str(repo_use)
             source_name = repo_use.name
-            st.info(f"업로드 없이 저장소의 `{source_name}` 를 자동 사용합니다. (다른 파일을 올리면 그 파일을 씁니다.)")
+            st.info(f"업로드 없이 저장소의 `{source_name}` (총거래) + 국산거래표를 자동 사용합니다.")
     st.session_state['uploaded_source_name'] = source_name
 
     # 모드/연도/파일이 바뀌면 이전에 로드·편집한 파이프라인을 전부 비워 새로 로드.
