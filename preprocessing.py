@@ -13,6 +13,13 @@ Upload contract for non-US modes: sheet 0 = Total Transactions Table
 the BoK layout where labels are at the first `number_of_label` rows/cols and
 the numeric block starts at `first_idx`.
 
+일본 모드는 로드 직후 `_derive_domestic_local` 이 시트 1(수입거래표)의
+X 블록을 (총거래 − 수입) = 국산거래로 치환한다. 하류의 L_local
+(부가가치유발계수 m_v = v·(I−A_d)⁻¹)은 국산투입계수 기준 역행렬을
+기대하는데, 일본 정리본의 시트 1은 수입거래표이기 때문이다 — US 모드가
+국산거래표를 df_local 로 넘기는 것과 동일한 계약으로 맞춘다.
+(한국 모드는 기존 동작 유지 — 시트 1 을 그대로 df_local 로 사용.)
+
 The US mode uses two BEA Use-table workbooks already arranged in the Korean
 BoK layout (one year per sheet; 2000~2020, 2023, 2024; Summary level n=71):
 `미국_사용표_총거래_한국레이아웃_2000_2024.xlsx` (총거래표, df) and
@@ -187,6 +194,68 @@ def _load_two_sheet(uploaded_file, params: ModeParams) -> LoadResult:
     df       = load_data(uploaded_file, 0)
     df_local = load_data(uploaded_file, 1)
     return _post_clean(df, df_local, params)
+
+
+# 시트 1 이 수입거래표인 모드 중 국산거래표(총거래 − 수입) 변환을 적용할 모드.
+# 일본만 적용 — 한국 모드는 기존 동작(시트 1 을 그대로 df_local 로) 유지 결정,
+# Manual 은 레이아웃을 알 수 없으므로 제외.
+_DERIVE_DOMESTIC_MODES = {"Japan(2000~2020)"}
+
+
+def _derive_domestic_local(result: LoadResult, params: ModeParams) -> LoadResult:
+    """시트 1(수입거래표)의 X 블록을 국산거래(총거래 − 수입)로 치환한다.
+
+    치환 범위는 내생부문계 행·열(mid 위치)까지 — 합계는 선형이라 부분합도
+    그대로 정합한다. df_local 의 최종수요/본원투입 영역은 하류(m_v 의
+    L_local)에서 쓰지 않으므로 그대로 둔다. 두 시트의 부문 코드가 위치까지
+    일치하는지 검증한 뒤 위치 기반으로 차감한다.
+    """
+    fi = params.first_idx
+    df, dfl = result.df, result.df_local.copy()
+    mid, midl = result.mid_ID_idx, result.mid_ID_idx_local
+
+    n_rows, n_cols = mid[0] - fi[0], mid[1] - fi[1]
+    if (midl[0] - fi[0], midl[1] - fi[1]) != (n_rows, n_cols):
+        raise ValueError(
+            f"총거래표 X 블록({n_rows}×{n_cols})과 수입거래표 X 블록"
+            f"({midl[0] - fi[0]}×{midl[1] - fi[1]})의 크기가 다릅니다 — "
+            f"두 시트의 부문 구성이 같은 워크북인지 확인하세요."
+        )
+
+    def _code(x):
+        s = str(x).strip()
+        return str(int(s)) if s.replace(".", "", 1).isdigit() else s
+
+    codes_total = [_code(x) for x in df.iloc[fi[0]:mid[0], 0]]
+    codes_imp   = [_code(x) for x in dfl.iloc[fi[0]:midl[0], 0]]
+    if codes_total != codes_imp:
+        first_bad = next(i for i, (a, b) in enumerate(zip(codes_total, codes_imp)) if a != b)
+        raise ValueError(
+            f"총거래표와 수입거래표의 부문 코드 순서가 다릅니다 "
+            f"(첫 불일치: 행 {fi[0] + first_bad}, "
+            f"'{codes_total[first_bad]}' vs '{codes_imp[first_bad]}')."
+        )
+
+    total_X = (df.iloc[fi[0]:mid[0] + 1, fi[1]:mid[1] + 1]
+               .apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))
+    imp_X = (dfl.iloc[fi[0]:midl[0] + 1, fi[1]:midl[1] + 1]
+             .apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))
+    domestic = total_X - np.nan_to_num(imp_X)  # 수입표의 빈 셀은 수입 0 으로 간주
+
+    dfl.iloc[fi[0]:midl[0] + 1, fi[1]:midl[1] + 1] = domestic
+
+    old_title = dfl.iat[0, 0]
+    prefix = f"{old_title} → " if isinstance(old_title, str) and old_title.strip() else ""
+    dfl.iat[0, 0] = f"{prefix}국산거래표(총거래−수입, 로드 시 유도)"
+
+    return LoadResult(
+        df=df,
+        df_local=dfl,
+        mid_ID_idx=mid,
+        mid_ID_idx_local=midl,
+        string_values=result.string_values,
+        string_values_local=result.string_values_local,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -459,4 +528,7 @@ def load_workbook(uploaded_file, mode: str, *, us_year: int | None = None) -> Lo
                 f"app.py 가 us_year 키워드를 넘겨야 합니다."
             )
         return _load_us(uploaded_file, mode, params, year=int(us_year))
-    return _load_two_sheet(uploaded_file, params)
+    result = _load_two_sheet(uploaded_file, params)
+    if mode in _DERIVE_DOMESTIC_MODES:
+        result = _derive_domestic_local(result, params)
+    return result
