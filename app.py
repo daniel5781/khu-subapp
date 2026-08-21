@@ -9,6 +9,15 @@ import networkx as nx
 import re
 from networkx.exception import PowerIterationFailedConvergence
 
+# Streamlit Cloud는 새 커밋 동기화 시 메인 스크립트만 소스에서 다시 읽고,
+# 이미 import된 모듈은 실행 중 프로세스의 옛 버전을 유지할 수 있다(반쪽 배포:
+# 새 app.py + 옛 iolib → NameError). 새 이름이 없으면 모듈을 재로드해 자가 수복.
+import iolib.download as _iolib_download
+if not hasattr(_iolib_download, "render_japan_data_sidebar"):
+    import importlib
+    importlib.reload(_iolib_download)
+render_japan_data_sidebar = _iolib_download.render_japan_data_sidebar
+
 
 def _render_quadrant_scatter(df_metric, x_col, y_col, title, key):
     """지표 DataFrame(라벨 2열 + 지표 열들)을 4분면 산점도로 그린다.
