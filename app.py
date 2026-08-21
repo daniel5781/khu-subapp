@@ -143,6 +143,8 @@ def render_centrality_tabs(cents, weighted=True, key_prefix=""):
 
 ### Streamlit 구현
 def main():
+    st.sidebar.header("데이터")
+    render_japan_data_sidebar()
     st.sidebar.header("다운로드")
     st.title("산업연관데이터 DashBoard")
     mode = st.radio('모드 선택', preprocessing.MODES)

@@ -54,6 +54,7 @@ from .download import (
     donwload_data,
     make_zip_bytes,
     download_multiple_csvs_as_zip,
+    render_japan_data_sidebar,
 )
 
 __all__ = [
@@ -73,4 +74,5 @@ __all__ = [
     "calculate_kim_metrics", "calculate_standard_metrics",
     # download
     "donwload_data", "make_zip_bytes", "download_multiple_csvs_as_zip",
+    "render_japan_data_sidebar",
 ]
