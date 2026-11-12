@@ -403,7 +403,7 @@ def main():
         # st.form: 텍스트 입력은 Enter/포커스 이탈로만 서버에 확정되므로, 입력 직후
         # 버튼을 바로 누르면 아직 확정되지 않은 값이 빈 문자열로 전송된다(코드/이름
         # 없는 산업이 삽입됨). 폼으로 묶으면 제출 버튼 클릭 시 입력값이 함께 전송된다.
-        with st.form('insert_sector_form'):
+        with st.form('insert_sector_form', border=False):
             col1, col2, col3 = st.columns(3)
             with col1:
                 new_code = st.text_input('새로 삽입할 산업의 code를 입력하세요')
@@ -431,7 +431,7 @@ def main():
                 "name": str(name),
                 })
 
-        with st.form('transfer_form'):
+        with st.form('transfer_form', border=False):
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 origin_code = st.text_input('from')
@@ -1077,7 +1077,7 @@ def main():
                 st.info(f"좌측 분석 결과를 참고하여\n임계값을 입력하세요.\n\n**제안값:** `{suggested_val:.4f}`")
                 
                 # 텍스트 입력창 (기본값은 0.000이지만, 제안값을 참고하도록 안내)
-                with st.form('threshold_form'):
+                with st.form('threshold_form', border=False):
                     input_val = st.text_input(
                         '임계값 (Threshold)', 
                         value='0.000',
