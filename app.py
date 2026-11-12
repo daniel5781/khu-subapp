@@ -400,13 +400,23 @@ def main():
 
         # Manual Processing (Existing)
         st.markdown("#### 수동 입력")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_code = st.text_input('새로 삽입할 산업의 code를 입력하세요')
-        with col2:
-            name = st.text_input('새로 삽입할 산업의 이름을 입력하세요')
-        with col3:
-            if st.button('산업 추가'):
+        # st.form: 텍스트 입력은 Enter/포커스 이탈로만 서버에 확정되므로, 입력 직후
+        # 버튼을 바로 누르면 아직 확정되지 않은 값이 빈 문자열로 전송된다(코드/이름
+        # 없는 산업이 삽입됨). 폼으로 묶으면 제출 버튼 클릭 시 입력값이 함께 전송된다.
+        with st.form('insert_sector_form'):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_code = st.text_input('새로 삽입할 산업의 code를 입력하세요')
+            with col2:
+                name = st.text_input('새로 삽입할 산업의 이름을 입력하세요')
+            with col3:
+                insert_clicked = st.form_submit_button('산업 추가')
+        if insert_clicked:
+            new_code = str(new_code).strip()
+            name = str(name).strip()
+            if not new_code or not name:
+                st.warning('새로 삽입할 산업의 code와 이름을 모두 입력한 뒤 [산업 추가]를 누르세요.')
+            else:
                 result = insert_row_and_col(st.session_state['df_editing'], first_idx, st.session_state['mid_ID_idx'], new_code, name, number_of_label)
                 st.session_state['df_editing'], st.session_state['mid_ID_idx'] = result[0:2]
                 st.session_state['data_editing_log'] += (result[2] + '\n\n')
@@ -421,15 +431,28 @@ def main():
                 "name": str(name),
                 })
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            origin_code = st.text_input('from')
-        with col2:
-            target_code = st.text_input('to')
-        with col3:
-            alpha = float(st.text_input('alpha value (0.000 to 1.000)', '0.000'))
-        with col4:
-            if st.button('값 옮기기'):
+        with st.form('transfer_form'):
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                origin_code = st.text_input('from')
+            with col2:
+                target_code = st.text_input('to')
+            with col3:
+                alpha_text = st.text_input('alpha value (0.000 to 1.000)', '0.000')
+            with col4:
+                transfer_clicked = st.form_submit_button('값 옮기기')
+        if transfer_clicked:
+            origin_code = str(origin_code).strip()
+            target_code = str(target_code).strip()
+            try:
+                alpha = float(alpha_text)
+            except (TypeError, ValueError):
+                alpha = None
+            if not origin_code or not target_code:
+                st.warning('from, to 산업 code를 모두 입력한 뒤 [값 옮기기]를 누르세요.')
+            elif alpha is None or not (0.0 <= alpha <= 1.0):
+                st.warning(f'alpha 값은 0.000 ~ 1.000 사이의 숫자여야 합니다. (입력값: {alpha_text!r})')
+            else:
                 result = transfer_to_new_sector(st.session_state['df_editing'], first_idx, origin_code, target_code, alpha)
                 st.session_state['df_editing'] = result[0]
                 st.session_state['data_editing_log'] += (result[1] + '\n\n')
@@ -1054,16 +1077,22 @@ def main():
                 st.info(f"좌측 분석 결과를 참고하여\n임계값을 입력하세요.\n\n**제안값:** `{suggested_val:.4f}`")
                 
                 # 텍스트 입력창 (기본값은 0.000이지만, 제안값을 참고하도록 안내)
-                input_val = st.text_input(
-                    '임계값 (Threshold)', 
-                    value='0.000',
-                    help=f"그래프의 Final Decision ({suggested_val:.4f}) 값을 입력하면 최적화된 결과를 얻을 수 있습니다."
-                )
-                threshold_val = float(input_val) if input_val else 0.0
+                with st.form('threshold_form'):
+                    input_val = st.text_input(
+                        '임계값 (Threshold)', 
+                        value='0.000',
+                        help=f"그래프의 Final Decision ({suggested_val:.4f}) 값을 입력하면 최적화된 결과를 얻을 수 있습니다."
+                    )
+                    st.write("") # Margin
+                    apply_clicked = st.form_submit_button('설정 적용하기 (Apply)', type="primary", use_container_width=True)
+                try:
+                    threshold_val = float(input_val) if input_val else 0.0
+                except (TypeError, ValueError):
+                    threshold_val = None
                 
-                st.write("") # Margin
-                
-                if st.button('설정 적용하기 (Apply)', type="primary", use_container_width=True):
+                if apply_clicked and threshold_val is None:
+                    st.warning(f'임계값은 숫자여야 합니다. (입력값: {input_val!r})')
+                elif apply_clicked:
                     # 버튼을 눌러야만 비로소 session_state에 등록되어 아래 결과창이 열림
                     st.session_state.threshold = threshold_val
                     st.session_state.threshold_cal = True
