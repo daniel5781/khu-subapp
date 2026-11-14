@@ -15,7 +15,7 @@ def _load(content, mode, year, first_idx, revision):
 
 
 def render_upload():
-    mode = st.radio("모드 선택", preprocessing.MODES, key="mode")
+    mode = st.selectbox("국가·표 형식", preprocessing.MODES, key="mode")
     params = preprocessing.get_mode_params(mode)
     manual_start = None
     if mode == "Manual":

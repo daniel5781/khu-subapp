@@ -38,6 +38,17 @@ def reset_source(state, signature):
         "transfer_alpha",
     ):
         state.pop(key, None)
+    for key in list(state):
+        if key.startswith(("alpha_", "_alpha_")) or key in (
+            "undo_stack",
+            "redo_stack",
+            "workspace_notice",
+            "workspace_view",
+            "_next_view",
+            "export_choice",
+            "transfer_percent",
+        ):
+            state.pop(key, None)
     state["source_signature"] = signature
     return True
 

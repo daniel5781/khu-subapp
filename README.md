@@ -2,10 +2,68 @@
 
 한국·일본·미국 산업연관표를 읽고 산업을 편집한 뒤 Leontief 역행렬,
 전·후방 연쇄효과, GDP·부가가치 유발효과와 산업 네트워크를 분석합니다.
-독립 Python 라이브러리 `iolib`와 두 가지 한국어 화면으로 구성됩니다.
-**Dash 버전**은 Plotly 대화형 차트와 AG Grid를 사용하고, 기존 Streamlit 버전도 함께 제공합니다.
+**Streamlit을 기본 화면으로 유지**하며 독립 Python 라이브러리 `iolib`로 계산합니다.
+Plotly Dash 버전은 별도 실행할 수 있는 대안으로 남겨둡니다.
 
-## Dash 버전 실행
+## Streamlit 실행 (기본)
+
+Python 3.10 이상을 사용하며 저장소 폴더에서 실행합니다.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install -e '.[dashboard]'
+streamlit run app.py
+```
+
+기존 `pip install -r requirements.txt`도 지원합니다.
+설치 후에는 어느 디렉터리에서든 다음 명령으로 실행할 수 있습니다.
+
+```bash
+khu-subapp --data-dir /path/to/khu-subapp-main --port 8501
+```
+
+`--data-dir` 또는 환경 변수 `KHU_SUBAPP_DATA_DIR`은 미국 워크북과
+`일본_산업연관표_연도별_자료/`가 있는 폴더입니다. 소스에서 실행할 때 기본값은
+저장소 루트입니다. **대용량 원자료는 wheel에 포함하지 않습니다.**
+한국·일본 파일 업로드는 원자료 폴더 설정 없이도 사용할 수 있습니다.
+Streamlit Cloud는 `requirements.txt`와 한글 폰트용 `packages.txt`를 사용합니다.
+
+## 산업별 비율 입력
+
+1. 왼쪽에서 국가·표 형식과 원자료를 선택합니다.
+2. **산업 편집**에서 새 산업 코드·이름을 정합니다. 기본값은 `6000 / TMT`입니다.
+3. 표의 **이동 비율 (%)**에 산업별 값을 입력합니다. **20%는 `20`**을 입력하며,
+   빈칸·0은 이동하지 않습니다. 여러 Excel 셀을 붙여넣을 수 있습니다.
+4. 이름·코드로 검색해도 다른 산업의 입력값은 유지됩니다. 일괄 채우기는 현재
+   검색 결과에만 적용되며, 최종 적용은 검색 밖의 산업까지 포함합니다.
+5. 미리보기에서 출발 산업·이동 비율·남는 비율·대상을 확인한 뒤
+   **비율 적용 및 경제지표 계산**을 누릅니다. 새 산업은 자동으로 추가됩니다.
+   계산을 나중에 하려면 **편집표에만 적용**을 사용합니다.
+
+적용 후 값을 바꾸면 **같은 분리 전 표에서 다시 계산**합니다. 예를 들어 20%를
+40%로 바꾸면 원래 산업의 40%를 분리합니다. 이미 줄어든 산업에서 다시 40%를
+옮기지 않습니다. 동일한 비율을 반복해서 눌러도 중복 반영하지 않습니다.
+**현재 분리 해제**는 해당 분리 전 표로 복원합니다. 다른 새 산업도 분리하려면
+**다른 새 산업 분리 시작**으로 현재 편집표를 새 기준으로 삼습니다.
+
+**Excel / ZIP에서 비율 가져오기 → 입력표로 가져오기**를 누르면 기존 양식과
+연도별 비율을 같은 표에서 검토·수정할 수 있습니다. 기존 산업으로 이동하거나
+여러 대상을 지정한 파일은 별도 미리보기와 일괄 적용도 지원합니다. **비율표 Excel 저장**은
+재사용 가능한 표준 양식을 내보내며, 이 파일의 `alpha` 열은 기존 규약인
+0~1로 저장합니다(`20% = 0.2`).
+
+**실행 취소·다시 실행**은 최근 10단계를 지원합니다. **원본으로 되돌리기**도
+실행 취소로 복원할 수 있습니다. 원자료를 바꾸면 초안·이력·계산을 초기화합니다.
+기존 산업 간 이동은 **기타 편집**에서 산업 이름으로 검색해 선택합니다.
+이 도구로 추가 편집하면 새 비율 입력 작업이 시작됩니다.
+
+산업 편집·경제지표·네트워크·내보내기는 별도 화면입니다. 화면을 이동해도 비율
+초안과 네트워크 설정은 유지됩니다. 편집할 때는 선택하지 않은 화면의 차트를
+그리지 않습니다. 경제지표에서는 모든 산업을 검색해 강조할 수 있고, 내보내기에서는
+필요한 결과 하나를 선택하거나 전체 ZIP을 받을 수 있습니다.
+
+## 대안: Dash 버전 실행
 
 Python 3.10 이상을 사용합니다. 저장소 폴더에서 실행합니다.
 
@@ -51,28 +109,6 @@ khu-dash --data-dir /path/to/data --cache-dir /path/to/cache
 Waitress 서버는 기본적으로 로컬 주소 `127.0.0.1`에서 실행됩니다. 상태 확인 경로는
 `/healthz`입니다. 파일별 업로드 한도는 50MB입니다.
 
-## 기존 Streamlit 버전 실행
-
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-python -m pip install -e '.[dashboard,dev]'
-streamlit run app.py
-```
-
-기존 `pip install -r requirements.txt`도 지원합니다.
-설치 후에는 어느 디렉터리에서든 다음 명령으로 실행할 수 있습니다.
-
-```bash
-khu-subapp --data-dir /path/to/khu-subapp-main --port 8501
-```
-
-`--data-dir` 또는 환경 변수 `KHU_SUBAPP_DATA_DIR`은 미국 워크북과
-`일본_산업연관표_연도별_자료/`가 있는 폴더입니다. 소스에서 실행할 때 기본값은
-저장소 루트입니다. **대용량 원자료는 wheel에 포함하지 않습니다.**
-한국·일본 파일 업로드는 원자료 폴더 설정 없이도 사용할 수 있습니다.
-Streamlit Cloud는 `requirements.txt`와 한글 폰트용 `packages.txt`를 사용합니다.
-
 ## Python 라이브러리로 사용
 
 패키지의 `dash`·`dashboard`·`plots` 의존성은 각각 선택해서 설치합니다.
@@ -113,7 +149,10 @@ Path('results.zip').write_bytes(make_zip_bytes({**analysis.frames, **network.fra
 | `dash_app/callbacks.py`, `views.py` | 이벤트 연결, 저장된 상태의 화면 표시 |
 | `dash_app/services.py`, `models.py`, `store.py` | 작업 흐름, 상태 계약, 사용자별 저장·동시성 제어 |
 | `dash_app/uploads.py`, `tables.py`, `figures.py` | 업로드 검증, AG Grid 변환, Plotly 차트 |
-| `dashboard/app.py` | 화면 구성요소의 실행 순서 |
+| `dashboard/app.py` | 단계별 화면, 공통 상태·복원 도구 |
+| `dashboard/alpha.py`, `batch.py` | 산업별 백분율 입력표, 파일 가져오기·미리보기 |
+| `dashboard/workspace.py` | 초안과 분리 기준표, 적용·수정, 실행 취소·다시 실행 |
+| `dashboard/labels.py` | 결과 식별자의 화면 표시 이름 |
 | `dashboard/upload.py`, `editing.py` | 파일·모드 선택, 수동·일괄 편집 폼 |
 | `dashboard/analysis.py`, `network.py` | 분석 결과와 네트워크 표시, UI 캐시 |
 | `dashboard/state.py` | 파일·편집 변경 시 결과 무효화, 전체 다운로드 수집 |
@@ -122,6 +161,7 @@ Path('results.zip').write_bytes(make_zip_bytes({**analysis.frames, **network.fra
 | `iolib/config.py`, `models.py` | 모드·데이터 위치 설정, 공통 데이터 계약 |
 | `iolib/preprocessing.py`, `us_workbooks.py`, `loading.py` | 한국·일본·수동·미국 워크북 읽기와 표 경계 |
 | `iolib/editing.py`, `batch_upload.py`, `session.py` | 편집 연산·검증·업로드, 두 표에 대한 원자적 편집 |
+| `iolib/allocations.py` | 산업 목록, 백분율→alpha 변환, 단일 대상 계획 검증 |
 | `iolib/leontief.py`, `analysis.py` | 정규화·역행렬, FL/BL·GDP·부가가치 계산 |
 | `iolib/network.py`, `network_analysis.py` | Method A/B 추출과 공통 네트워크 결과 조립 |
 | `iolib/centrality.py`, `structural.py` | 중심성·HITS, 구조적 공백 지표 |
@@ -162,14 +202,14 @@ Other는 별도 기타투입으로 분류하며 T018을 정규화 분모로 사�
 
 ## 편집과 연도별 TMT 비율
 
-`Alpha 값 엑셀/ZIP 파일 업로드`에 다음 중 하나를 올립니다.
+**Excel / ZIP에서 비율 가져오기**에 다음 중 하나를 올립니다.
 
 - `from`, `to`, `to_name`, `alpha` 열: `alpha`는 0~1, 출발 산업별 합은 1 이하입니다.
 - 첫 열이 `대분류/년도`이고 이후 연도 열에 `20.380%(C09)` 형식으로 비율이 있는 표.
 
 연도별 표는 원본 표의 연도를 우선 제안합니다. 연도를 찾지 못하면 선택하고,
 목적산업(기본 `6000 / TMT`)과 미리보기를 확인한 뒤 일괄 적용합니다.
-Streamlit에서는 이어서 `전체 적용`으로 경제지표를 계산합니다.
+Streamlit에서는 입력표에 가져온 뒤 **비율 적용 및 경제지표 계산**을 사용합니다.
 빈 셀과 연도 열 뒤 참고 계산은 제외합니다. `11` 같은 숫자코드는 `0011`처럼
 앞에 0이 붙은 유일한 원본 코드에 대응합니다. 같은 비율의 중복 적용을 막습니다.
 
@@ -205,6 +245,8 @@ python -m build
 
 단위·통합 테스트는 정확한 행렬 항등식, 거래량 보존, 편집 원자성, 고립 그래프,
 시트 선택과 Streamlit AppTest의 실제 폼 제출·분석·상태 전환을 검사합니다.
+백분율 입력·검색·화면 이동·Excel 재가져오기, 비율 수정 시 기준표 재사용,
+두 거래표의 P X Pᵀ 일치와 실행 취소·복원도 검증합니다.
 Dash는 Flask 테스트 클라이언트로 실제 업로드·편집·분석·다운로드 콜백 요청,
 콜백 의존성의 순환 여부, 사용자별 작업 격리와 동시 저장 충돌을 검사합니다.
 Streamlit·matplotlib 없이 Dash 앱이 생성되는지도 확인합니다.
@@ -215,7 +257,7 @@ Streamlit·matplotlib 없이 Dash 앱이 생성되는지도 확인합니다.
 CI는 Python 3.10·3.13에서 검사와 sdist/wheel 빌드를 수행하도록 구성돼 있습니다.
 GitHub에 반영한 뒤 원격 실행 결과를 확인할 수 있습니다.
 
-`dist/khu_subapp-0.2.0-py3-none-any.whl`을 별도 환경에 설치할 수 있습니다.
+`dist/khu_subapp-0.3.0-py3-none-any.whl`을 별도 환경에 설치할 수 있습니다.
 패키지 배포·PyPI 업로드는 별도로 수행합니다.
 
 `new.py`는 대시보드와 무관한 일회성 스크레이퍼입니다. `bea_io_download.py` 등

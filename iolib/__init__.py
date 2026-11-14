@@ -4,7 +4,7 @@
 기존 functions.py API도 호환을 위해 유지한다.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .loading import (
     load_data,

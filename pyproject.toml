@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "khu-subapp"
-version = "0.2.0"
+version = "0.3.0"
 description = "산업연관표 편집, Leontief 분석 및 산업 네트워크 추출"
 readme = "README.md"
 requires-python = ">=3.10"

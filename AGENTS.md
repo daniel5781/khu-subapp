@@ -20,6 +20,20 @@ invariant tests, since aggregate digests alone do not detect every error.
 ## Architecture and dependencies
 
 - `app.py` delegates to `dashboard.app.main`; do not put computation there.
+- Streamlit remains the primary UI. Keep Dash optional and independent.
+- `dashboard/alpha.py` owns the single-new-sector percentage grid; `batch.py` imports
+  file plans into that grid. `workspace.py` owns drafts, baseline editors and the last
+  10 undo/redo snapshots. `iolib/allocations.py` validates percentages and converts them
+  to existing batch operations. Never duplicate the numerical splitting algorithm.
+- The grid displays percentages 0–100; batch operations/files still use alpha 0–1.
+  Editing an applied split replaces it from the same pre-split baseline, rather than
+  applying the new percentage to the already reduced table. New split work starts only
+  explicitly or after a different editor operation. Do not discard drafts on navigation.
+- Keep the grid seed stable while editing. Filter changes require a fresh widget key,
+  since Streamlit records cell changes by row position. Persist drafts by industry code.
+  Widget cleanup must not discard the draft or network settings when changing views.
+- Only render the active Streamlit view; do not compute charts/download archives on each
+  percentage keystroke. New workflows need AppTest interactions and exact two-table checks.
 - `app_dash.py` / `python -m dash_app` / `khu-dash` launch the alternative Dash app.
 - `dash_app/layout.py` and assets own layout; `callbacks.py` only routes events to
   `services.py`. `views.py`, `tables.py` and `figures.py` render saved results.
