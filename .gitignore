@@ -16,3 +16,12 @@ bea_io_download.log
 # Excel lock files (created while a workbook is open)
 ~$*.xlsx
 ~$*.xls
+
+# Python package / test artifacts
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage

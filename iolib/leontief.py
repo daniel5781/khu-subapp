@@ -7,6 +7,9 @@
   : 네트워크 행렬 전처리
 - `make_col` / `make_table` : 지표 열·표 조립
 """
+
+from dataclasses import dataclass
+from .validation import square_matrix
 import numpy as np
 import pandas as pd
 
@@ -37,10 +40,10 @@ def compute_leontief_inverse(A, epsilon=0.05, max_iter=100):
         M (ndarray): I + A + A^2 + ... + A^r (r번째 항까지 계산한 근사 Leontief 역행렬).
     """
     n = A.shape[0]
-    I = np.eye(n)           # n x n 항등행렬 생성
-    M = I.copy()            # 초기 누적합: M(0) = I
-    s_prev = np.sum(M)      # 초기 전체합 (s(0))
-    k = 1                   # 거듭제곱 차수 초기화
+    I = np.eye(n)  # n x n 항등행렬 생성
+    M = I.copy()  # 초기 누적합: M(0) = I
+    s_prev = np.sum(M)  # 초기 전체합 (s(0))
+    k = 1  # 거듭제곱 차수 초기화
 
     while k < max_iter:
         # A^k 계산 (행렬의 거듭제곱)
@@ -130,84 +133,13 @@ def create_undirected_network(BN):
     return UN
 
 
-def build_leontief_outputs(
-    df_for_leontief: pd.DataFrame,
-    normalization_denominator_replaced,
-):
-    """
-      1) df_for_leontief_with_label  (라벨 포함 + 레온티에프 역행렬 L만, FL/BL 없음)
-      2) df_for_leontief_without_label (라벨 제거 + L만)
-      3) fl_bl (번호/부문명칭 + FL + BL)
-    """
-
-    # 1) with/without 준비 (너 코드 동일)
-    df_with_label = df_for_leontief.copy()
-    df_without_label = df_with_label.iloc[2:, 2:].copy()
-
-    # 2) A(tmp) 만들기: 숫자 변환 + 열 정규화 (너 코드 동일)
-    tmp = df_without_label.copy()
-    tmp = tmp.apply(pd.to_numeric, errors="coerce")
-    tmp = tmp.divide(normalization_denominator_replaced, axis=1)
-
-    # A를 with_label에 반영 (너 코드 동일)
-    df_with_label.iloc[2:, 2:] = tmp
-
-    # 3) 레온티에프 역행렬 L=(I-A)^-1 (너 코드 동일)
-    unit_matrix = np.eye(tmp.shape[0])
-    subtracted_matrix = unit_matrix - tmp
-    leontief = np.linalg.inv(subtracted_matrix.values)
-    leontief = pd.DataFrame(leontief)
-
-    # 4) (N+1)x(N+1)로 확장해서 FL/BL 계산 + 평균 정규화 (너 코드 동일)
-    leontief_rows, leontief_cols = leontief.shape
-    leontief_with_sums = np.zeros((leontief_rows + 1, leontief_cols + 1))
-    leontief_with_sums[:-1, :-1] = leontief.values
-    leontief_with_sums[-1, :-1] = leontief.sum(axis=0).values  # BL 원자료(열합)
-    leontief_with_sums[:-1, -1] = leontief.sum(axis=1).values  # FL 원자료(행합)
-
-    last_row_mean = leontief_with_sums[-1, :-1].mean()
-    leontief_with_sums[-1, :-1] /= last_row_mean
-
-    last_col_mean = leontief_with_sums[:-1, -1].mean()
-    leontief_with_sums[:-1, -1] /= last_col_mean
-
-    new_df = pd.DataFrame(leontief_with_sums)
-
-    # 5) current_df 확장 후, (2,2)부터 new_df 삽입 (너 코드 동일)
-    current_df = df_with_label
-    existing_rows = current_df.shape[0] - 2
-    existing_cols = current_df.shape[1] - 2
-
-    current_df = current_df.reindex(
-        index=range(existing_rows + 3),
-        columns=range(existing_cols + 3)
-    )
-
-    current_df.iloc[2:2 + new_df.shape[0], 2:2 + new_df.shape[1]] = new_df.values
-    current_df.iloc[1, -1] = "FL"
-    current_df.iloc[-1, 1] = "BL"
-
-    # 6) fl_bl 추출 (너 코드의 iloc 위치 그대로)
-    ids_col = current_df.iloc[1:-1, :2]
-    fl_data = current_df.iloc[1:-1, -1]
-    bl_data = current_df.iloc[-1, 1:-1]
-
-    fl_data = fl_data.to_frame(name="2")
-    bl_data = bl_data.to_frame(name="3")
-
-    ids_col = ids_col.reset_index(drop=True)
-    fl_data = fl_data.reset_index(drop=True)
-    bl_data = bl_data.reset_index(drop=True)
-
-    fl_bl = pd.concat([ids_col, fl_data, bl_data], axis=1)
-
-    # 7) 최종 with_label에서는 FL/BL 제거 (너 코드 동일)
-    df_for_leontief_with_label = current_df.iloc[:-1, :-1].copy()
-
-    # 8) 최종 without_label 갱신 (너 코드 동일)
-    df_for_leontief_without_label = df_for_leontief_with_label.iloc[2:, 2:].copy()
-
-    return df_for_leontief_with_label, df_for_leontief_without_label
+def build_leontief_outputs(df_for_leontief, normalization_denominator_replaced):
+    """호환 API: 라벨 포함/미포함 역행렬. 정규화와 역행렬 계산은 공통 엔진 사용."""
+    frame = df_for_leontief.copy().astype(object)
+    numeric = frame.iloc[2:, 2:].apply(pd.to_numeric, errors="raise").fillna(0)
+    result = calculate_leontief(numeric, normalization_denominator_replaced)
+    frame.iloc[2:, 2:] = result.inverse
+    return frame, frame.iloc[2:, 2:].copy()
 
 
 # 지표 열 만드는 함수
@@ -216,9 +148,9 @@ def make_col(title: str, vec_1d: np.ndarray, colname: str) -> pd.DataFrame:
     return pd.concat(
         [
             pd.DataFrame([title], columns=[colname]),
-            pd.Series(vec_1d).to_frame(name=colname)
+            pd.Series(vec_1d).to_frame(name=colname),
         ],
-        axis=0
+        axis=0,
     ).reset_index(drop=True)
 
 
@@ -226,3 +158,39 @@ def make_col(title: str, vec_1d: np.ndarray, colname: str) -> pd.DataFrame:
 def make_table(base_df, cols: list[pd.DataFrame]) -> pd.DataFrame:
     ids_col = base_df.iloc[1:, :2].reset_index(drop=True)
     return pd.concat([ids_col] + cols, axis=1)
+
+
+@dataclass(frozen=True)
+class LeontiefResult:
+    coefficients: np.ndarray
+    inverse: np.ndarray
+    forward_linkage: np.ndarray
+    backward_linkage: np.ndarray
+
+
+def calculate_leontief(transactions, output):
+    """열 위치에 따라 정규화한다. pandas 인덱스 정렬에 의존하지 않는다."""
+    matrix = square_matrix(transactions, "중간거래 행렬")
+    denominator = np.asarray(output, dtype=float).reshape(-1)
+    if denominator.shape != (len(matrix),) or not np.isfinite(denominator).all():
+        raise ValueError("총투입계 벡터의 길이와 값이 산업 행렬에 맞지 않습니다.")
+    zero = denominator == 0
+    if np.any(np.any(matrix != 0, axis=0) & zero):
+        raise ValueError(
+            "총투입계가 0인 산업에 중간투입이 있습니다. 원자료나 편집 내역을 확인하세요."
+        )
+    coefficients = matrix / np.where(zero, 1.0, denominator)
+    try:
+        inverse = np.linalg.inv(np.eye(len(matrix)) - coefficients)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "레온티에프 역행렬을 계산할 수 없습니다. 중복·0 산업 또는 특이행렬을 확인하세요."
+        ) from exc
+    if not np.isfinite(inverse).all():
+        raise ValueError("레온티에프 역행렬에 유효하지 않은 값이 있습니다.")
+    forward, backward = inverse.sum(axis=1), inverse.sum(axis=0)
+    if np.isclose(forward.mean(), 0) or np.isclose(backward.mean(), 0):
+        raise ValueError("연쇄효과 평균이 0이어서 FL/BL을 정규화할 수 없습니다.")
+    return LeontiefResult(
+        coefficients, inverse, forward / forward.mean(), backward / backward.mean()
+    )

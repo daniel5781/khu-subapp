@@ -11,11 +11,13 @@
 연산은 코드(문자열)와 수치를 한 DataFrame 에 섞어 쓰므로 새로 만드는 열은
 반드시 object dtype 이어야 한다(`_nan_object_column`).
 """
+
 from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+from .validation import validate_ratio
 
 
 def _nan_object_column(n: int, index) -> pd.Series:
@@ -43,56 +45,83 @@ def _canon_code(x) -> str:
 
 
 def insert_row_and_col(df, first_idx, mid_ID_idx, code, name, num_of_label):
-    code = _canon_code(code)   # 숫자로 들어와도 '11' 같은 문자열로 저장
+    code = _canon_code(code)  # 숫자로 들어와도 '11' 같은 문자열로 저장
+    name = str(name).strip()
+    existing = df.iloc[first_idx[0] : mid_ID_idx[0], first_idx[1] - num_of_label].map(
+        _canon_code
+    )
+    if not code or not name or name == "nan":
+        raise ValueError("산업 코드와 이름을 입력하세요.")
+    if code in existing.values:
+        raise ValueError(f"이미 존재하는 산업 코드입니다: {code}")
     df_editing = df.copy()
-    df_editing.insert(loc=mid_ID_idx[1], column='a',
-                      value=_nan_object_column(df_editing.shape[0], df_editing.index),
-                      allow_duplicates=True)
-    df_editing.iloc[first_idx[0]-num_of_label, mid_ID_idx[1]] = code
-    df_editing.iloc[first_idx[0]-num_of_label+1, mid_ID_idx[1]] = name
-    df_editing.iloc[first_idx[0]:, mid_ID_idx[1]] = 0
+    df_editing.insert(
+        loc=mid_ID_idx[1],
+        column="a",
+        value=_nan_object_column(df_editing.shape[0], df_editing.index),
+        allow_duplicates=True,
+    )
+    df_editing.iloc[first_idx[0] - num_of_label, mid_ID_idx[1]] = code
+    df_editing.iloc[first_idx[0] - num_of_label + 1, mid_ID_idx[1]] = name
+    df_editing.iloc[first_idx[0] :, mid_ID_idx[1]] = 0
     df_editing.columns = range(df_editing.shape[1])
     df_editing = df_editing.T
-    df_editing.insert(loc=mid_ID_idx[0], column='a',
-                      value=_nan_object_column(df_editing.shape[0], df_editing.index),
-                      allow_duplicates=True)
-    df_editing.iloc[first_idx[1]-num_of_label, mid_ID_idx[0]] = code
-    df_editing.iloc[first_idx[1]-num_of_label+1, mid_ID_idx[0]] = name
-    df_editing.iloc[first_idx[1]:, mid_ID_idx[0]] = 0
+    df_editing.insert(
+        loc=mid_ID_idx[0],
+        column="a",
+        value=_nan_object_column(df_editing.shape[0], df_editing.index),
+        allow_duplicates=True,
+    )
+    df_editing.iloc[first_idx[1] - num_of_label, mid_ID_idx[0]] = code
+    df_editing.iloc[first_idx[1] - num_of_label + 1, mid_ID_idx[0]] = name
+    df_editing.iloc[first_idx[1] :, mid_ID_idx[0]] = 0
     df_editing.columns = range(df_editing.shape[1])
     df_editing = df_editing.T
     df_inserted = df_editing.copy()
-    mid_ID_idx = (mid_ID_idx[0]+1, mid_ID_idx[1]+1)
-    msg = f'A new row and column (Code: {code}, Name: {name}) have been inserted.'
+    mid_ID_idx = (mid_ID_idx[0] + 1, mid_ID_idx[1] + 1)
+    msg = f"A new row and column (Code: {code}, Name: {name}) have been inserted."
 
     return df_inserted, mid_ID_idx, msg
 
 
-def transfer_to_new_sector(df, first_idx, origin_code, target_code, ratio, code_label=2):
+def transfer_to_new_sector(
+    df, first_idx, origin_code, target_code, ratio, code_label=2
+):
+    ratio = validate_ratio(ratio)
+    if _canon_code(origin_code) == _canon_code(target_code):
+        raise ValueError("출발 산업과 대상 산업이 같습니다.")
     df_editing = df.copy()
     # 코드 열이 int/float 로 읽혀 있어도 문자열 입력과 매칭되도록 정규화해 비교.
-    codes = df_editing[first_idx[1]-code_label].map(_canon_code)
+    codes = df_editing[first_idx[1] - code_label].map(_canon_code)
     target_idx = df_editing.index[codes == _canon_code(target_code)].tolist()
     if len(target_idx) == 1:
         target_idx = target_idx[0]
     else:
-        msg = 'ERROR: target code is not unique.'
-        return df_editing, msg
+        raise ValueError("대상 산업 코드가 없거나 유일하지 않습니다.")
     origin_idx = df_editing.index[codes == _canon_code(origin_code)].tolist()
     if len(origin_idx) == 1:
         origin_idx = origin_idx[0]
     else:
-        msg = 'ERROR: origin code is not unique.'
-        return df_editing, msg
-    df_editing.iloc[first_idx[0]:, first_idx[1]:] = df_editing.iloc[first_idx[0]:, first_idx[1]:].apply(pd.to_numeric, errors='coerce')
-    origin_idx = (origin_idx, origin_idx-first_idx[0]+first_idx[1])
-    target_idx = (target_idx, target_idx-first_idx[0]+first_idx[1])
-    df_editing.iloc[target_idx[0], first_idx[1]:] += df_editing.iloc[origin_idx[0], first_idx[1]:] * ratio
-    df_editing.iloc[origin_idx[0], first_idx[1]:] = df_editing.iloc[origin_idx[0], first_idx[1]:] * (1-ratio)
-    df_editing.iloc[first_idx[0]:, target_idx[1]] += df_editing.iloc[first_idx[0]:, origin_idx[1]] * ratio
-    df_editing.iloc[first_idx[0]:, origin_idx[1]] = df_editing.iloc[first_idx[0]:, origin_idx[1]] * (1-ratio)
+        raise ValueError("출발 산업 코드가 없거나 유일하지 않습니다.")
+    df_editing.iloc[first_idx[0] :, first_idx[1] :] = df_editing.iloc[
+        first_idx[0] :, first_idx[1] :
+    ].apply(pd.to_numeric, errors="coerce")
+    origin_idx = (origin_idx, origin_idx - first_idx[0] + first_idx[1])
+    target_idx = (target_idx, target_idx - first_idx[0] + first_idx[1])
+    df_editing.iloc[target_idx[0], first_idx[1] :] += (
+        df_editing.iloc[origin_idx[0], first_idx[1] :] * ratio
+    )
+    df_editing.iloc[origin_idx[0], first_idx[1] :] = df_editing.iloc[
+        origin_idx[0], first_idx[1] :
+    ] * (1 - ratio)
+    df_editing.iloc[first_idx[0] :, target_idx[1]] += (
+        df_editing.iloc[first_idx[0] :, origin_idx[1]] * ratio
+    )
+    df_editing.iloc[first_idx[0] :, origin_idx[1]] = df_editing.iloc[
+        first_idx[0] :, origin_idx[1]
+    ] * (1 - ratio)
 
-    msg = f'{ratio*100}% of {origin_code} has been moved to {target_code}.'
+    msg = f"{ratio * 100}% of {origin_code} has been moved to {target_code}."
     return df_editing, msg
 
 
@@ -123,10 +152,14 @@ def remove_zero_series(
     # -------------------------
     if remove_positions is None:
         # 기존 로직: first_idx 이후 블록을 숫자로 보고, 행 전체가 0인 행 찾기
-        df_test = df_editing.iloc[first_idx[0]:, first_idx[1]:].apply(pd.to_numeric, errors="coerce")
+        df_test = df_editing.iloc[first_idx[0] :, first_idx[1] :].apply(
+            pd.to_numeric, errors="coerce"
+        )
 
         zero_row_indices = df_test.index[(df_test == 0).all(axis=1)].tolist()
-        zero_row_indices = [i for i in zero_row_indices if first_idx[0] <= i <= mid_ID_idx[0]]
+        zero_row_indices = [
+            i for i in zero_row_indices if first_idx[0] <= i < mid_ID_idx[0]
+        ]
 
         # 기존 로직: row index -> 대응되는 col index 매핑
         zero_col_indices = [i - first_idx[0] + first_idx[1] for i in zero_row_indices]
@@ -174,7 +207,9 @@ def reduce_negative_values(df, first_idx, mid_ID_idx):
     df_editing = df.copy()
 
     # first_idx에서 mid_ID_idx까지의 범위 슬라이싱
-    df_test = df_editing.iloc[first_idx[0]:mid_ID_idx[0], first_idx[1]:mid_ID_idx[1]].apply(pd.to_numeric, errors='coerce')
+    df_test = df_editing.iloc[
+        first_idx[0] : mid_ID_idx[0], first_idx[1] : mid_ID_idx[1]
+    ].apply(pd.to_numeric, errors="coerce")
 
     # 음수 값이 있는 위치 추적 및 줄인 값 계산
     reduced_values_per_column = {}
@@ -185,16 +220,22 @@ def reduce_negative_values(df, first_idx, mid_ID_idx):
             reduced_value = value / 2
             if col_index not in reduced_values_per_column:
                 reduced_values_per_column[col_index] = 0
-            reduced_values_per_column[col_index] += value - reduced_value  # 원래 값 - 절반으로 줄인 값
+            reduced_values_per_column[col_index] += (
+                value - reduced_value
+            )  # 원래 값 - 절반으로 줄인 값
             return reduced_value
         return value
 
     # 음수인 값만 1/2로 줄이면서 추적
     for col_idx in range(df_test.shape[1]):
-        df_test.iloc[:, col_idx] = df_test.iloc[:, col_idx].apply(lambda x: reduce_and_track(x, col_idx))
+        df_test.iloc[:, col_idx] = df_test.iloc[:, col_idx].apply(
+            lambda x: reduce_and_track(x, col_idx)
+        )
 
     # 수정된 값을 원본 데이터프레임에 다시 반영 (first_idx에서 mid_ID_idx까지의 부분)
-    df_editing.iloc[first_idx[0]:mid_ID_idx[0], first_idx[1]:mid_ID_idx[1]] = df_test
+    df_editing.iloc[first_idx[0] : mid_ID_idx[0], first_idx[1] : mid_ID_idx[1]] = (
+        df_test
+    )
 
     # 마지막 행에 줄인 값만큼 더하기
     last_row_index = df_editing.shape[0] - 1
@@ -232,9 +273,18 @@ def apply_batch_edit(
     df_out, mid_out, ids_out, log_text
     """
 
+    batch_df = validate_batch_edit(batch_df)
     df_curr = df_curr.copy()
+    ids_simbol = deepcopy(ids_simbol)
     code_col_idx = first_idx[1] - number_of_label
 
+    codes = df_curr.iloc[first_idx[0] : mid_ID_idx[0], code_col_idx].map(_canon_code)
+    for code in batch_df["from"].unique():
+        if (codes == code).sum() != 1:
+            raise ValueError(f"출발 산업 코드가 없거나 유일하지 않습니다: {code}")
+    for code in batch_df["to"].unique():
+        if (codes == code).sum() > 1:
+            raise ValueError(f"대상 산업 코드가 유일하지 않습니다: {code}")
     log_lines = []
 
     # -------------------------
@@ -246,7 +296,10 @@ def apply_batch_edit(
         new_code = _canon_code(t["to"])
         new_name = str(t["to_name"]) if str(t["to_name"]) not in ["nan", "None"] else ""
 
-        exists = (df_curr.iloc[:, code_col_idx].map(_canon_code) == new_code).any()
+        exists = (
+            df_curr.iloc[first_idx[0] : mid_ID_idx[0], code_col_idx].map(_canon_code)
+            == new_code
+        ).any()
         if exists:
             if new_code not in ids_simbol:
                 ids_simbol[new_code] = []
@@ -277,49 +330,46 @@ def apply_batch_edit(
     # -------------------------
     grouped = batch_df.groupby("from")
     # 1단계의 insert 가 끝난 뒤라 행 구성이 고정 — 코드 열을 한 번만 정규화.
-    codes_series = df_curr.iloc[:, code_col_idx].map(_canon_code)
+    codes_series = df_curr.iloc[first_idx[0] : mid_ID_idx[0], code_col_idx].map(
+        _canon_code
+    )
 
     for origin_code, group in grouped:
-        origin_indices = df_curr.index[codes_series == _canon_code(origin_code)].tolist()
+        origin_indices = codes_series.index[
+            codes_series == _canon_code(origin_code)
+        ].tolist()
         if len(origin_indices) != 1:
-            log_lines.append(f"Error: Origin Code '{origin_code}' 유일하지 않거나 없음. 스킵")
-            continue
+            raise ValueError(
+                f"출발 산업 코드가 없거나 유일하지 않습니다: {origin_code}"
+            )
 
         origin_row_idx = origin_indices[0]
         origin_col_idx = origin_row_idx - first_idx[0] + first_idx[1]
 
-        # snapshot
-        origin_row_data = df_curr.iloc[origin_row_idx, first_idx[1]:].copy()
-        origin_col_data = df_curr.iloc[first_idx[0]:, origin_col_idx].copy()
-
+        # 먼저 행을 분배한 뒤 갱신된 열을 분배한다. X -> P X P^T 이므로
+        # 자기 거래와 여러 대상 간 교차 거래도 보존된다.
+        origin_row_data = df_curr.iloc[origin_row_idx, first_idx[1] :].copy()
         total_alpha = float(group["alpha"].sum())
-
-        for _, r in group.iterrows():
-            target_code = r["to"]
-            ratio = float(r["alpha"])
-
-            target_indices = df_curr.index[codes_series == _canon_code(target_code)].tolist()
-            if len(target_indices) != 1:
-                log_lines.append(
-                    f"Error: Target Code '{target_code}' 유일하지 않거나 없음. ({origin_code}->{target_code} 스킵)"
-                )
-                continue
-
-            target_row_idx = target_indices[0]
-            target_col_idx = target_row_idx - first_idx[0] + first_idx[1]
-
-            df_curr.iloc[target_row_idx, first_idx[1]:] += origin_row_data * ratio
-            df_curr.iloc[first_idx[0]:, target_col_idx] += origin_col_data * ratio
-
-            log_lines.append(f"[Batch] {origin_code} -> {target_code}: {ratio*100:.2f}% 이동")
-
-        remaining_ratio = 1.0 - total_alpha
-        if abs(remaining_ratio) < 1e-9:
-            remaining_ratio = 0.0
-
-        df_curr.iloc[origin_row_idx, first_idx[1]:] = origin_row_data * remaining_ratio
-        df_curr.iloc[first_idx[0]:, origin_col_idx] = origin_col_data * remaining_ratio
-        log_lines.append(f"[Batch Info] {origin_code} 잔여: {remaining_ratio*100:.4f}%")
+        remaining_ratio = max(0.0, 1.0 - total_alpha)
+        targets = []
+        for _, row in group.iterrows():
+            target_idx = codes_series.index[codes_series == row["to"]][0]
+            ratio = float(row["alpha"])
+            targets.append(
+                (target_idx, target_idx - first_idx[0] + first_idx[1], ratio)
+            )
+            df_curr.iloc[target_idx, first_idx[1] :] += origin_row_data * ratio
+            log_lines.append(
+                f"[Batch] {origin_code} -> {row['to']}: {ratio * 100:.2f}% 이동"
+            )
+        df_curr.iloc[origin_row_idx, first_idx[1] :] = origin_row_data * remaining_ratio
+        origin_col_data = df_curr.iloc[first_idx[0] :, origin_col_idx].copy()
+        for _, target_col, ratio in targets:
+            df_curr.iloc[first_idx[0] :, target_col] += origin_col_data * ratio
+        df_curr.iloc[first_idx[0] :, origin_col_idx] = origin_col_data * remaining_ratio
+        log_lines.append(
+            f"[Batch Info] {origin_code} 잔여: {remaining_ratio * 100:.4f}%"
+        )
 
     log_text = "\n".join([x for x in log_lines if x])
 
@@ -338,9 +388,9 @@ def replay_edit_ops_on_df(
     transfer_to_new_sector_fn,
     remove_zero_series_fn,
     reduce_negative_values_fn,
-    batch_apply_fn=None,          # apply_batch_edit 같은 함수 주입
-    copy_ids: bool = False,       # ids_simbol 공유 싫으면 True
-    return_log: bool = True,      # 디버깅/기록용 로그 반환
+    batch_apply_fn=None,  # apply_batch_edit 같은 함수 주입
+    copy_ids: bool = False,  # ids_simbol 공유 싫으면 True
+    return_log: bool = True,  # 디버깅/기록용 로그 반환
 ):
     """
     ops를 순서대로 df_base에 다시 적용하여 df/mid/ids를 갱신해서 반환.
@@ -419,7 +469,9 @@ def replay_edit_ops_on_df(
         # 3) 0인 행/열 삭제 (remove_zero_series)
         # -------------------------
         elif t == "remove_zero":
-            result = remove_zero_series_fn(df, first_idx, mid, remove_positions=op.get("remove_positions"))
+            result = remove_zero_series_fn(
+                df, first_idx, mid, remove_positions=op.get("remove_positions")
+            )
             df, mid = result[0], result[2]
 
             if return_log and len(result) >= 2 and result[1]:
@@ -474,3 +526,25 @@ def replay_edit_ops_on_df(
         return df, mid, ids, log_text
 
     return df, mid, ids
+
+
+def validate_batch_edit(batch_df):
+    """표준·연도별 입력 모두 적용 전에 전체를 검증한다."""
+    required = {"from", "to", "to_name", "alpha"}
+    if not required.issubset(batch_df.columns) or batch_df.empty:
+        raise ValueError(
+            "일괄 편집에 from, to, to_name, alpha 열과 한 개 이상의 행이 필요합니다."
+        )
+    result = batch_df.copy()
+    for column in ("from", "to"):
+        result[column] = result[column].map(_canon_code)
+        if (result[column] == "").any():
+            raise ValueError("산업 코드는 비어 있을 수 없습니다.")
+    result["alpha"] = result["alpha"].map(validate_ratio)
+    if (result["from"] == result["to"]).any():
+        raise ValueError("출발 산업과 대상 산업이 같습니다.")
+    if (result.groupby("from")["alpha"].sum() > 1 + 1e-12).any():
+        raise ValueError("출발 산업별 이동 비율 합은 1(100%) 이하여야 합니다.")
+    if (result.groupby("to")["to_name"].nunique() > 1).any():
+        raise ValueError("같은 대상 코드에 서로 다른 산업 이름이 있습니다.")
+    return result
