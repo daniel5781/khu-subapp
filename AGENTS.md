@@ -3,8 +3,9 @@
 ## Run and verify
 
 ```bash
-python -m pip install -e '.[dashboard,dev]'
+python -m pip install -e '.[dashboard,dash,dev]'
 streamlit run app.py
+khu-dash --port 8050
 ruff check .
 python -m unittest discover -s tests -v
 python tests/regression_oracle.py --check
@@ -19,6 +20,16 @@ invariant tests, since aggregate digests alone do not detect every error.
 ## Architecture and dependencies
 
 - `app.py` delegates to `dashboard.app.main`; do not put computation there.
+- `app_dash.py` / `python -m dash_app` / `khu-dash` launch the alternative Dash app.
+- `dash_app/layout.py` and assets own layout; `callbacks.py` only routes events to
+  `services.py`. `views.py`, `tables.py` and `figures.py` render saved results.
+- `dash_app/store.py` stores private user workspaces server-side with token/revision
+  pointers in `dcc.Store`. Never put mutable per-user data in module globals.
+  Validate revisions again at commit time, after long calculations. Source/parameter
+  changes must invalidate in-flight work even when no result has been stored yet.
+- Keep the Dash callback dependency graph acyclic. Programmatic threshold suggestions
+  belong to the analyze action, not a workspace-render callback that feeds back into it.
+- Dash's `dash` extra must run without Streamlit or matplotlib; CSS is wheel package data.
 - `dashboard/` owns Streamlit, widget forms, caching, state invalidation, charts and downloads.
 - `iolib/` is the reusable library. Importing it must not import Streamlit or matplotlib.
 - `iolib.preprocessing` owns loading; `config` owns mode/data paths; `us_workbooks` owns BEA conversion.
@@ -26,7 +37,8 @@ invariant tests, since aggregate digests alone do not detect every error.
 - `iolib.leontief` owns matrix normalization/inversion; `analysis` owns economic indicators.
 - `iolib.network` extracts matrices; `centrality` and `structural` compute metrics;
   `network_analysis` assembles their shared output.
-- `iolib.exports` serializes CSV/ZIP. `plots` imports matplotlib only when explicitly requested.
+- `iolib.exports` collects current result frames and serializes CSV/ZIP; `resources` reads
+  shared raw files. `plots` imports matplotlib only when explicitly requested.
 - Root `functions.py` and `preprocessing.py`, and `iolib.download` retain old public imports.
   New code imports explicit names from the owning module. Private monkeypatches should
   target the owning module, not a compatibility shim.
@@ -74,7 +86,9 @@ Binary HITS must remove original weights; handle isolated/single-node networks s
 
 ## Tests and compatibility
 
-Tests use deterministic small workbooks plus repository datasets and Streamlit AppTest.
+Tests use deterministic small workbooks, repository datasets, Streamlit AppTest,
+and real Dash HTTP callback requests. Dash tests also check isolated users, concurrent
+updates, acyclic dependencies, table serialization and UI-independent imports.
 The optional user Downloads fixture may skip in CI; required repository fixtures must run
 in repository checkouts. Never add external files, environment secrets, or generated raw
 outputs to package artifacts. `dist/`, virtualenvs and build metadata are ignored by Git.

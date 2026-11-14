@@ -4,10 +4,6 @@
 (고칠 거면 모든 호출부를 함께 바꿔야 한다).
 """
 
-import io
-import zipfile
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -15,7 +11,12 @@ from iolib.loading import convert_df
 from iolib.config import get_data_dir
 from iolib.exports import make_zip_bytes
 
-JAPAN_DATA_DIRNAME = "일본_산업연관표_연도별_자료"
+from iolib.resources import (
+    JAPAN_DATA_DIRNAME,
+    japan_files as _japan_data_files,
+    japan_zip_bytes as _japan_zip_bytes,
+    japan_file_bytes as _japan_file_bytes,
+)
 
 
 def download_data(df, file_name):
@@ -37,32 +38,6 @@ def download_multiple_csvs_as_zip(dfs: dict[str, pd.DataFrame], zip_name: str):
         file_name=f"{zip_name}.zip",
         mime="application/zip",
     )
-
-
-def _japan_data_files(folder: Path) -> list[Path]:
-    return [
-        p
-        for p in sorted(folder.rglob("*"))
-        if p.is_file() and not p.name.startswith((".", "~$"))
-    ]
-
-
-def _japan_zip_bytes(folder_name: str) -> bytes:
-    """저장소의 일본 원자료 폴더(또는 '전체')를 ZIP 바이너리로 묶는다.
-
-    파일들은 저장소에 정적으로 커밋돼 있으므로 폴더명만으로 캐시해도 안전하다.
-    """
-    data_dir = get_data_dir() / JAPAN_DATA_DIRNAME
-    base = data_dir if folder_name == "전체" else data_dir / folder_name
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for p in _japan_data_files(base):
-            zf.write(p, p.relative_to(data_dir.parent))
-    return buf.getvalue()
-
-
-def _japan_file_bytes(rel_path: str) -> bytes:
-    return (get_data_dir() / JAPAN_DATA_DIRNAME / rel_path).read_bytes()
 
 
 def render_japan_data_sidebar():

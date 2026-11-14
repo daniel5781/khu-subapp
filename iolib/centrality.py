@@ -107,17 +107,28 @@ def calculate_network_centralities(G_bn, df_label, use_weight=False):
         hubs = authorities = dict.fromkeys(G_bn, 0.0)
     else:
         try:
-            hubs, authorities = nx.hits(
-                G_bn,
-                max_iter=1000,
-                tol=1e-08,
-                normalized=True,
-                nstart=dict.fromkeys(G_bn, 1.0),
-            )
+            # 반복 특이값에서는 ARPACK이 부호가 섞인 벡터를 반환할 수 있다.
+            # 합으로 정규화하면 0 나눗셈 또는 거대한 양/음수가 되므로 검증한다.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                hubs, authorities = nx.hits(
+                    G_bn,
+                    max_iter=1000,
+                    tol=1e-08,
+                    normalized=True,
+                    nstart=dict.fromkeys(G_bn, 1.0),
+                )
+            for scores in (hubs, authorities):
+                values = np.array(list(scores.values()), dtype=float)
+                if (
+                    not np.isfinite(values).all()
+                    or (values < -1e-12).any()
+                    or not np.isclose(values.sum(), 1)
+                ):
+                    raise ValueError("유효하지 않은 HITS 정규화 결과")
         except (nx.PowerIterationFailedConvergence, ValueError):
             nodes = list(G_bn)
             matrix = nx.to_numpy_array(G_bn, nodelist=nodes)
-            left, _, right = np.linalg.svd(matrix)
+            left, _, right = np.linalg.svd(matrix / matrix.max())
             h, a = np.abs(left[:, 0]), np.abs(right[0, :])
             hubs = dict(zip(nodes, h / h.sum()))
             authorities = dict(zip(nodes, a / a.sum()))

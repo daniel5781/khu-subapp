@@ -1,4 +1,4 @@
-include app.py requirements.txt packages.txt AGENTS.md CLAUDE.md
+include app.py app_dash.py requirements-dash.txt requirements.txt packages.txt AGENTS.md CLAUDE.md
 recursive-include tests *.py *.json
 prune dist
 prune build

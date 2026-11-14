@@ -2,6 +2,9 @@
 
 import hashlib
 from pathlib import Path
+from iolib.exports import collect_result_frames as collect_exports
+
+__all__ = ["collect_exports", "invalidate_results", "reset_source", "source_revision"]
 
 RESULT_KEYS = (
     "analysis",
@@ -47,24 +50,3 @@ def source_revision(source):
     path = Path(source)
     stat = path.stat()
     return str(path.resolve()), stat.st_mtime_ns, stat.st_size
-
-
-def collect_exports(editor, analysis=None, network_frames=None):
-    from iolib.analysis import partition_table
-
-    if editor is None:
-        return {}
-    original = editor.original
-    frames = {"uploaded_df": original.df, "uploaded_df_local": original.df_local}
-    frames.update(
-        {
-            f"uploaded_{name}": frame
-            for name, frame in partition_table(
-                original.df, editor.params.first_idx, original.mid_ID_idx
-            ).items()
-        }
-    )
-    if analysis is not None:
-        frames.update(analysis.frames)
-        frames.update(network_frames or {})
-    return frames

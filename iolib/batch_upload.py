@@ -294,3 +294,14 @@ def prepare_batch_preview(
         )
 
     return df, meta, preview_lines, summary_lines
+
+
+def infer_input_year(df, source_name=""):
+    for row in (1, 0):
+        if len(df) > row:
+            text = " ".join(str(v) for v in df.iloc[row, :2].dropna())
+            years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text))
+            if len(years) == 1:
+                return int(years.pop())
+    years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", source_name))
+    return int(years.pop()) if len(years) == 1 else None

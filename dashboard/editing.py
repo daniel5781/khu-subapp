@@ -1,21 +1,13 @@
 """수동/일괄 편집 화면. 모든 변경은 EditingSession에서 두 표에 함께 적용한다."""
 
-import re
 import streamlit as st
 from .tables import show_table
-from iolib.batch_upload import inspect_batch_upload, prepare_batch_preview
+from iolib.batch_upload import (
+    inspect_batch_upload,
+    prepare_batch_preview,
+    infer_input_year,
+)
 from .state import invalidate_results
-
-
-def infer_input_year(df, source_name=""):
-    for row in (1, 0):
-        if len(df) > row:
-            text = " ".join(str(v) for v in df.iloc[row, :2].dropna())
-            years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text))
-            if len(years) == 1:
-                return int(years.pop())
-    years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", source_name))
-    return int(years.pop()) if len(years) == 1 else None
 
 
 def _apply(operation):

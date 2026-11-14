@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import numpy as np
 from fixtures import workbook_table
 from iolib.network import analyze_threshold, extract_series_network, graph_from_matrix
@@ -58,6 +59,34 @@ class NetworkTests(unittest.TestCase):
             actual.iloc[:, 2:].to_numpy(float), expected.iloc[:, 2:].to_numpy(float)
         )
         self.assertEqual(graph[1][2]["weight"], 9)
+
+    def test_degenerate_hits_are_finite_nonnegative_normalized_singular_vectors(self):
+        graph = graph_from_matrix([[0.0, 1.0], [1.0, 0.0]])
+        for bad in (
+            ({0: float("inf"), 1: float("-inf")}, {0: float("nan"), 1: 0.0}),
+            ({0: 1e16, 1: -1e16}, {0: -1e16, 1: 1e16}),
+        ):
+            with (
+                self.subTest(bad=bad),
+                patch("iolib.centrality.nx.hits", return_value=bad),
+            ):
+                scores = (
+                    calculate_network_centralities(graph, self.template(2), False)[4]
+                    .iloc[:, 2:]
+                    .to_numpy(float)
+                )
+                self.assertTrue(np.isfinite(scores).all())
+                self.assertTrue((scores >= 0).all())
+                np.testing.assert_allclose(scores.sum(axis=0), 1.0)
+                # 두 산업의 상호 연결은 h = A a, a = Aᵀ h를 만족한다.
+                np.testing.assert_allclose(scores[:, 0], scores[::-1, 1])
+        scores = (
+            calculate_network_centralities(graph, self.template(2), False)[4]
+            .iloc[:, 2:]
+            .to_numpy(float)
+        )
+        self.assertTrue(np.isfinite(scores).all())
+        self.assertTrue((scores >= -1e-12).all())
 
     def test_series_returns_previous_step_at_structural_convergence(self):
         matrix = np.array([[0.2, 0.1], [0.3, 0.2]])

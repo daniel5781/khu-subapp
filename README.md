@@ -2,11 +2,56 @@
 
 한국·일본·미국 산업연관표를 읽고 산업을 편집한 뒤 Leontief 역행렬,
 전·후방 연쇄효과, GDP·부가가치 유발효과와 산업 네트워크를 분석합니다.
-한국어 Streamlit 화면과 독립 Python 라이브러리 `iolib`로 구성됩니다.
+독립 Python 라이브러리 `iolib`와 두 가지 한국어 화면으로 구성됩니다.
+**Dash 버전**은 Plotly 대화형 차트와 AG Grid를 사용하고, 기존 Streamlit 버전도 함께 제공합니다.
 
-## 실행
+## Dash 버전 실행
 
-Python 3.10 이상을 사용합니다.
+Python 3.10 이상을 사용합니다. 저장소 폴더에서 실행합니다.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install -e '.[dash]'
+khu-dash --port 8050
+```
+
+브라우저에서 `http://127.0.0.1:8050`을 엽니다. `python app_dash.py` 또는
+`python -m dash_app`도 같은 앱을 실행합니다. `pip install -r requirements-dash.txt`로도
+설치할 수 있습니다. Dash 버전은 Streamlit·matplotlib를 설치하거나 불러오지 않습니다.
+
+1. 왼쪽에서 국가·표 형식과 파일을 선택하고 **데이터 불러오기**를 누릅니다.
+   미국 모드는 연도 선택 후 제공된 워크북으로 시작할 수 있습니다.
+2. **데이터 · 편집**에서 산업 추가·비율 이동·음수 보정·일괄 편집을 적용합니다.
+   일괄 편집은 **미리보기 생성 → 일괄 적용** 순서입니다. 연도 목록만 나타나면
+   적용 연도를 선택한 뒤 미리보기를 다시 생성합니다.
+3. **경제지표 계산**을 누르고 **경제지표**에서 FL/BL·GDP 차트와 결과 표를 확인합니다.
+4. **네트워크**에서 Method A/B 설정 후 **네트워크 추출**을 누릅니다.
+   가중·이진 네트워크, HITS·구조적 공백 차트와 6종 중심성 표를 탐색합니다.
+5. **내보내기**에서 현재 자료를 CSV·ZIP으로 저장하거나 일본 원자료를 받습니다.
+
+차트는 확대·이동·값 확인과 PNG 저장을 지원합니다. 표는 검색·정렬·필터·페이지
+이동을 지원하며, 편집 작업은 위의 폼에서 적용합니다. 그래프가 크면 연결선 상위
+1,200개만 화면에 표시합니다. 중심성 계산과 다운로드에는 전체 연결을 사용합니다.
+
+사용자별 작업은 서버의 임시 디스크 저장소에 보관합니다. 새로고침·새 탭은 새
+작업을 시작하며, 2시간 동안 접근하지 않은 작업은 만료됩니다. 종료 전에 필요한
+결과를 내려받으세요. 기본 CLI는 종료 시 임시 폴더를 정리합니다. `--cache-dir`로
+지정한 폴더는 종료 시 보존하며, 캐시 크기는 기본 512MB로 제한됩니다.
+동시 편집 요청은 버전을 검사해 먼저 끝난 요청 하나만 반영합니다.
+원자료 설정을 바꾸면 편집과 계산을 초기화하고, 편집하면 계산 결과를 지웁니다.
+네트워크 설정을 바꾸면 네트워크를 다시 추출해야 합니다.
+
+```bash
+khu-dash --data-dir /path/to/khu-subapp-main --port 8050
+# 필요할 때 작업 저장 위치도 지정
+khu-dash --data-dir /path/to/data --cache-dir /path/to/cache
+```
+
+Waitress 서버는 기본적으로 로컬 주소 `127.0.0.1`에서 실행됩니다. 상태 확인 경로는
+`/healthz`입니다. 파일별 업로드 한도는 50MB입니다.
+
+## 기존 Streamlit 버전 실행
 
 ```bash
 python -m venv .venv
@@ -30,6 +75,7 @@ Streamlit Cloud는 `requirements.txt`와 한글 폰트용 `packages.txt`를 사�
 
 ## Python 라이브러리로 사용
 
+패키지의 `dash`·`dashboard`·`plots` 의존성은 각각 선택해서 설치합니다.
 UI 없이 계산만 사용하려면 `python -m pip install .`로 설치합니다.
 `import iolib`는 Streamlit·matplotlib를 불러오지 않습니다.
 
@@ -62,7 +108,11 @@ Path('results.zip').write_bytes(make_zip_bytes({**analysis.frames, **network.fra
 
 | 구성요소 | 책임 |
 |---|---|
-| `app.py` | 기존 실행 명령을 유지하는 진입점 |
+| `app_dash.py`, `dash_app/cli.py`, `app.py` | Dash·Streamlit 실행 진입점 |
+| `dash_app/app.py`, `layout.py`, `assets/` | Dash 앱 팩토리, 화면 배치, 스타일 |
+| `dash_app/callbacks.py`, `views.py` | 이벤트 연결, 저장된 상태의 화면 표시 |
+| `dash_app/services.py`, `models.py`, `store.py` | 작업 흐름, 상태 계약, 사용자별 저장·동시성 제어 |
+| `dash_app/uploads.py`, `tables.py`, `figures.py` | 업로드 검증, AG Grid 변환, Plotly 차트 |
 | `dashboard/app.py` | 화면 구성요소의 실행 순서 |
 | `dashboard/upload.py`, `editing.py` | 파일·모드 선택, 수동·일괄 편집 폼 |
 | `dashboard/analysis.py`, `network.py` | 분석 결과와 네트워크 표시, UI 캐시 |
@@ -75,7 +125,7 @@ Path('results.zip').write_bytes(make_zip_bytes({**analysis.frames, **network.fra
 | `iolib/leontief.py`, `analysis.py` | 정규화·역행렬, FL/BL·GDP·부가가치 계산 |
 | `iolib/network.py`, `network_analysis.py` | Method A/B 추출과 공통 네트워크 결과 조립 |
 | `iolib/centrality.py`, `structural.py` | 중심성·HITS, 구조적 공백 지표 |
-| `iolib/exports.py`, `plots.py` | CSV/ZIP 직렬화, 선택적 Figure 어댑터 |
+| `iolib/exports.py`, `resources.py`, `plots.py` | 공통 결과 수집·CSV/ZIP, 원자료, 선택적 Figure 어댑터 |
 | `functions.py`, `preprocessing.py`, `iolib/download.py` | 기존 import/함수 호출의 호환 계층 |
 
 `iolib` 계산 함수는 Streamlit 상태를 읽거나 화면을 그리지 않습니다.
@@ -118,7 +168,8 @@ Other는 별도 기타투입으로 분류하며 T018을 정규화 분모로 사�
 - 첫 열이 `대분류/년도`이고 이후 연도 열에 `20.380%(C09)` 형식으로 비율이 있는 표.
 
 연도별 표는 원본 표의 연도를 우선 제안합니다. 연도를 찾지 못하면 선택하고,
-목적산업(기본 `6000 / TMT`)과 미리보기를 확인한 뒤 `일괄 적용` → `전체 적용`을 누릅니다.
+목적산업(기본 `6000 / TMT`)과 미리보기를 확인한 뒤 일괄 적용합니다.
+Streamlit에서는 이어서 `전체 적용`으로 경제지표를 계산합니다.
 빈 셀과 연도 열 뒤 참고 계산은 제외합니다. `11` 같은 숫자코드는 `0011`처럼
 앞에 0이 붙은 유일한 원본 코드에 대응합니다. 같은 비율의 중복 적용을 막습니다.
 
@@ -145,7 +196,7 @@ Other는 별도 기타투입으로 분류하며 T018을 정규화 분모로 사�
 ## 검증과 패키지 빌드
 
 ```bash
-python -m pip install -e '.[dashboard,dev]'
+python -m pip install -e '.[dashboard,dash,dev]'
 ruff check .
 python -m unittest discover -s tests -v
 python tests/regression_oracle.py --check
@@ -154,6 +205,9 @@ python -m build
 
 단위·통합 테스트는 정확한 행렬 항등식, 거래량 보존, 편집 원자성, 고립 그래프,
 시트 선택과 Streamlit AppTest의 실제 폼 제출·분석·상태 전환을 검사합니다.
+Dash는 Flask 테스트 클라이언트로 실제 업로드·편집·분석·다운로드 콜백 요청,
+콜백 의존성의 순환 여부, 사용자별 작업 격리와 동시 저장 충돌을 검사합니다.
+Streamlit·matplotlib 없이 Dash 앱이 생성되는지도 확인합니다.
 저장소에 포함된 미국 두 분류의 모든 가용 연도와 일본 5개 연도도 끝까지 계산합니다.
 기존 회귀 오라클은 실제 한국 2020 표의 38개 digest를 비교합니다.
 `tests/golden.json`은 의도한 수치 규약 변경이 있을 때만 검토 후 갱신합니다.
@@ -161,7 +215,7 @@ python -m build
 CI는 Python 3.10·3.13에서 검사와 sdist/wheel 빌드를 수행하도록 구성돼 있습니다.
 GitHub에 반영한 뒤 원격 실행 결과를 확인할 수 있습니다.
 
-`dist/khu_subapp-0.1.0-py3-none-any.whl`을 별도 환경에 설치할 수 있습니다.
+`dist/khu_subapp-0.2.0-py3-none-any.whl`을 별도 환경에 설치할 수 있습니다.
 패키지 배포·PyPI 업로드는 별도로 수행합니다.
 
 `new.py`는 대시보드와 무관한 일회성 스크레이퍼입니다. `bea_io_download.py` 등
